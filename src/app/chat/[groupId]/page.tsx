@@ -47,6 +47,10 @@ export default function Chat() {
     if (!groupId) return;
 
     fetchInitialData();
+  }, [groupId]);
+
+  useEffect(() => {
+    if (!groupId || !currentUser) return;
 
     // Single Realtime Channel for both Messages and Typing
     const channel = supabase.channel(`room:${groupId}`)
@@ -131,21 +135,19 @@ export default function Chat() {
         console.log('Left:', leftPresences);
       })
       .subscribe(async (status) => {
+        console.log('Realtime status:', status);
         if (status === 'SUBSCRIBED') {
-          const user = await getCurrentUser();
-          if (user) {
-            await channel.track({
-              user_id: user.id,
-              online_at: new Date().toISOString(),
-            });
-          }
+          await channel.track({
+            user_id: currentUser.id,
+            online_at: new Date().toISOString(),
+          });
         }
       });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [groupId]);
+  }, [groupId, currentUser?.id]);
 
   const handleTyping = () => {
     if (!groupId || !currentUser) return;
