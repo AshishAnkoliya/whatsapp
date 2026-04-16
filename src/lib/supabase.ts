@@ -1,0 +1,59 @@
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.warn('Supabase credentials missing. Please add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your environment.');
+}
+
+export const supabase = createClient(
+  supabaseUrl || 'https://placeholder.supabase.co',
+  supabaseAnonKey || 'placeholder'
+);
+
+export type Profile = {
+  id: string;
+  username: string;
+  avatar_url: string;
+  status: string;
+  last_seen: string;
+};
+
+export type Group = {
+  id: string;
+  name: string;
+  description: string;
+  avatar_url: string;
+  created_at: string;
+  created_by: string;
+};
+
+export type Message = {
+  id: string;
+  group_id: string;
+  sender_id: string;
+  content: string;
+  type: 'text' | 'image' | 'video' | 'document';
+  file_url?: string;
+  created_at: string;
+  sender_name?: string;
+  sender_avatar?: string;
+  reply_to?: {
+    sender_name: string;
+    content: string;
+  };
+  reactions?: {
+    [emoji: string]: string[]; // emoji -> list of user_ids
+  };
+  read_by?: string[]; // list of user_ids who have read the message
+  delivered_to?: string[]; // list of user_ids who have received the message
+  is_deleted?: boolean;
+};
+
+export type GroupMember = {
+  group_id: string;
+  user_id: string;
+  role: 'admin' | 'member';
+  joined_at: string;
+};

@@ -1,0 +1,6 @@
+{
+  "name": "WhatsApp Pro - Real-time Chat",
+  "description": "A high-end, professional mobile-first chat application with real-time group chats, media sharing, and smooth animations.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["Real-time Messaging", "Group Chats", "Media Sharing"]
+}
