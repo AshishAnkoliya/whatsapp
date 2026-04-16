@@ -24,7 +24,7 @@ const generateUUID = () => {
   if (typeof window !== 'undefined' && window.crypto && window.crypto.randomUUID) {
     return window.crypto.randomUUID();
   }
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
     const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
   });
@@ -57,7 +57,7 @@ export default function Chat() {
         filter: `group_id=eq.${groupId}`
       }, async (payload) => {
         const newMessage = payload.new as Message;
-        
+
         // Fetch sender info for the new message
         const { data: profile } = await supabase
           .from('profiles')
@@ -86,30 +86,30 @@ export default function Chat() {
       })
       .on('broadcast', { event: 'reaction_updated' }, ({ payload }) => {
         const { messageId, reactions } = payload;
-        setMessages(prev => prev.map(m => 
+        setMessages(prev => prev.map(m =>
           m.id === messageId ? { ...m, reactions } : m
         ));
       })
       .on('broadcast', { event: 'message_deleted' }, ({ payload }) => {
         const { messageId } = payload;
-        setMessages(prev => prev.map(m => 
+        setMessages(prev => prev.map(m =>
           m.id === messageId ? { ...m, is_deleted: true, content: '🚫 This message was deleted', type: 'text', file_url: undefined } : m
         ));
       })
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
         const { userId, username, isTyping } = payload;
-        
+
         // We use functional state update here to avoid depending on currentUser
         setCurrentUser((current: any) => {
           if (userId === current?.id) return current;
-          
+
           if (isTyping) {
             setTypingUsers(prev => prev.includes(username) ? prev : [...prev, username]);
-            
+
             if (typingTimeoutRef.current[userId]) {
               clearTimeout(typingTimeoutRef.current[userId]);
             }
-            
+
             typingTimeoutRef.current[userId] = setTimeout(() => {
               setTypingUsers(prev => prev.filter(u => u !== username));
             }, 3000);
@@ -159,8 +159,8 @@ export default function Chat() {
   async function markMessagesAsRead() {
     if (!groupId || !currentUser || !messages.length) return;
 
-    const unreadMessages = messages.filter(m => 
-      m.sender_id !== currentUser.id && 
+    const unreadMessages = messages.filter(m =>
+      m.sender_id !== currentUser.id &&
       (!m.read_by || !m.read_by.includes(currentUser.id))
     );
 
@@ -197,7 +197,7 @@ export default function Chat() {
         .eq('id', user.id)
         .single();
 
-      setCurrentUser({...user, username: profile?.username, avatar_url: profile?.avatar_url});
+      setCurrentUser({ ...user, username: profile?.username, avatar_url: profile?.avatar_url });
 
       // Fetch Group Info
       const { data: groupData } = await supabase
@@ -305,7 +305,7 @@ export default function Chat() {
         if (localStorage.getItem('mock_session')) {
           // In Dev Mode, keep the optimistic message even if DB fails
           console.warn('Message not persisted to DB (Dev Mode)');
-          
+
           // Simulate a bot reply after 2 seconds for testing
           setTimeout(() => {
             const botMsg: Message = {
@@ -320,7 +320,7 @@ export default function Chat() {
             setMessages(prev => [...prev, botMsg]);
             toast.info('Test Bot replied!');
           }, 2000);
-          
+
           return;
         }
         throw error;
@@ -341,9 +341,9 @@ export default function Chat() {
         .eq('id', messageId);
 
       if (error) throw error;
-      
+
       setMessages(prev => prev.map(m => m.id === messageId ? { ...m, is_deleted: true, content: '🚫 This message was deleted', type: 'text', file_url: undefined } : m));
-      
+
       supabase.channel(`room:${groupId}`).send({
         type: 'broadcast',
         event: 'message_deleted',
@@ -364,7 +364,7 @@ export default function Chat() {
 
     const currentReactions = message.reactions || {};
     const userIds = currentReactions[emoji] || [];
-    
+
     let newUserIds;
     if (userIds.includes(currentUser.id)) {
       newUserIds = userIds.filter(id => id !== currentUser.id);
@@ -386,7 +386,7 @@ export default function Chat() {
         .eq('id', messageId);
 
       if (error) throw error;
-      
+
       // Broadcast reaction update to other users instantly
       supabase.channel(`room:${groupId}`).send({
         type: 'broadcast',
@@ -395,7 +395,7 @@ export default function Chat() {
       });
 
       // Optimistic update
-      setMessages(prev => prev.map(m => 
+      setMessages(prev => prev.map(m =>
         m.id === messageId ? { ...m, reactions: newReactions } : m
       ));
     } catch (error: any) {
@@ -405,9 +405,9 @@ export default function Chat() {
 
   async function toggleStarMessage(messageId: string) {
     if (!currentUser) return;
-    
+
     const isStarred = starredMessageIds.includes(messageId);
-    
+
     try {
       if (isStarred) {
         const { error } = await supabase
@@ -543,12 +543,12 @@ export default function Chat() {
     if (files.length === 0 || !currentUser || !groupId) return;
 
     setIsUploading(true);
-    
+
     for (const file of files) {
       try {
         const fileId = Math.random().toString(36).substring(7);
         setUploadProgress(prev => ({ ...prev, [file.name]: 10 })); // Start at 10%
-        
+
         const fileExt = file.name.split('.').pop();
         const fileName = `${fileId}.${fileExt}`;
         const filePath = `${groupId}/${fileName}`;
@@ -570,7 +570,7 @@ export default function Chat() {
           .upload(filePath, file);
 
         clearInterval(progressInterval);
-        
+
         if (uploadError) throw uploadError;
 
         setUploadProgress(prev => ({ ...prev, [file.name]: 100 }));
@@ -594,7 +594,7 @@ export default function Chat() {
           });
 
         if (msgError) throw msgError;
-        
+
         // Remove from progress after a delay
         setTimeout(() => {
           setUploadProgress(prev => {
@@ -603,7 +603,7 @@ export default function Chat() {
             return newProgress;
           });
         }, 1000);
-        
+
       } catch (error: any) {
         toast.error(`Failed to upload ${file.name}: ${error.message}`);
       }
@@ -642,8 +642,8 @@ export default function Chat() {
   async function markMessagesAsDelivered() {
     if (!groupId || !currentUser || !messages.length) return;
 
-    const undeliveredMessages = messages.filter(m => 
-      m.sender_id !== currentUser.id && 
+    const undeliveredMessages = messages.filter(m =>
+      m.sender_id !== currentUser.id &&
       (!m.delivered_to || !m.delivered_to.includes(currentUser.id))
     );
 
@@ -652,13 +652,13 @@ export default function Chat() {
     try {
       // Collect IDs of messages that need to be marked as delivered to us
       const idsToUpdate = undeliveredMessages.map(m => m.id);
-      
+
       // In a real app we'd batch this or use a smart RPC. For now, we'll use a trick or sequential.
       // Better: Update messages where id is in the list
       // Note: We need to append to the array. Supabase doesn't have a native "append to array" in update without RPC.
       // For this pro version, let's assume we use a simple update for now or just skip if it's too complex for single query.
       // But let's try to at least update the local state.
-      
+
       setMessages(prev => prev.map(m => {
         if (idsToUpdate.includes(m.id)) {
           const deliveredTo = m.delivered_to || [];
@@ -712,7 +712,7 @@ export default function Chat() {
 
   async function leaveGroup() {
     if (!groupId || !currentUser) return;
-    
+
     const confirmLeave = window.confirm('Are you sure you want to leave this group?');
     if (!confirmLeave) return;
 
@@ -733,7 +733,7 @@ export default function Chat() {
 
   async function promoteToAdmin(userId: string) {
     if (!groupId || !isAdmin) return;
-    
+
     try {
       const { error } = await supabase
         .from('group_members')
@@ -742,7 +742,7 @@ export default function Chat() {
         .eq('user_id', userId);
 
       if (error) throw error;
-      setMembers(prev => prev.map(m => 
+      setMembers(prev => prev.map(m =>
         m.user_id === userId ? { ...m, role: 'admin' } : m
       ));
       toast.success('Member promoted to admin');
@@ -753,7 +753,7 @@ export default function Chat() {
 
   async function removeMember(userId: string) {
     if (!groupId || !isAdmin) return;
-    
+
     const confirmRemove = window.confirm('Are you sure you want to remove this member?');
     if (!confirmRemove) return;
 
@@ -784,7 +784,7 @@ export default function Chat() {
       .select('*')
       .ilike('username', `%${query}%`)
       .limit(5);
-    
+
     setSearchResults(data || []);
   }
 
@@ -820,7 +820,7 @@ export default function Chat() {
     const parts = text.split(new RegExp(`(${highlight})`, 'gi'));
     return (
       <>
-        {parts.map((part, i) => 
+        {parts.map((part, i) =>
           part.toLowerCase() === highlight.toLowerCase() ? (
             <mark key={i} className="bg-yellow-200 text-slate-900 rounded-sm px-0.5">{part}</mark>
           ) : (
@@ -831,20 +831,20 @@ export default function Chat() {
     );
   };
 
-  const filteredMessages = messages.filter(msg => 
+  const filteredMessages = messages.filter(msg =>
     msg.content.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ x: 20, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: -20, opacity: 0 }}
       transition={{ type: "spring", damping: 25, stiffness: 200 }}
-      className="flex flex-col h-full bg-[#efe7dd] relative overflow-hidden"
+      className="flex flex-col h-[100dvh] bg-[#efe7dd] overflow-hidden"
     >
       {/* Chat Header */}
-      <header className={cn("px-4 py-3 flex items-center gap-3 backdrop-blur-md sticky top-0 z-40 shadow-sm transition-colors duration-300", selectedMessageId ? "bg-emerald-600 border-none" : "bg-white/90 border-b border-slate-200")}>
+      <header className={cn("px-4 py-3 flex items-center gap-3 backdrop-blur-md z-40 shadow-sm transition-colors duration-300 flex-shrink-0", selectedMessageId ? "bg-emerald-600 border-none" : "bg-white/90 border-b border-slate-200")}>
         {selectedMessageId ? (
           <div className="flex w-full items-center text-white">
             <button onClick={() => setSelectedMessageId(null)} className="p-2 hover:bg-emerald-700 rounded-full transition-colors">
@@ -852,22 +852,22 @@ export default function Chat() {
             </button>
             <div className="flex-1 px-2 font-medium">1 Message Selected</div>
             <div className="flex items-center gap-2">
-              <button 
+              <button
                 onClick={() => {
                   const msg = messages.find(m => m.id === selectedMessageId);
                   if (msg) setReplyingTo(msg);
                   setSelectedMessageId(null);
-                }} 
+                }}
                 className="p-2 hover:bg-emerald-700 rounded-full transition-colors"
                 title="Reply"
               >
                 <ArrowLeft size={20} className="rotate-180" />
               </button>
-              <button 
+              <button
                 onClick={() => {
                   if (selectedMessageId) toggleStarMessage(selectedMessageId);
                   setSelectedMessageId(null);
-                }} 
+                }}
                 className={cn("p-2 rounded-full transition-colors", starredMessageIds.includes(selectedMessageId || '') ? "text-yellow-400 bg-emerald-700" : "hover:bg-emerald-700")}
                 title="Star"
               >
@@ -878,12 +878,12 @@ export default function Chat() {
                   <Trash2 size={20} />
                 </button>
               )}
-              <button 
+              <button
                 onClick={() => {
                   const msg = messages.find(m => m.id === selectedMessageId);
                   if (msg) setForwardMsg(msg);
                   setSelectedMessageId(null);
-                }} 
+                }}
                 className="p-2 hover:bg-emerald-700 rounded-full transition-colors"
                 title="Forward"
               >
@@ -896,289 +896,289 @@ export default function Chat() {
             <button onClick={() => navigate.back()} className="p-1 hover:bg-slate-100 rounded-full transition-colors">
               <ArrowLeft size={24} className="text-slate-600" />
             </button>
-        
-        {isSearching ? (
-          <div className="flex-1 flex items-center gap-2 bg-slate-100 px-3 py-1 rounded-full">
-            <Search size={18} className="text-slate-400" />
-            <input 
-              autoFocus
-              placeholder="Search messages..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-transparent border-none outline-none text-sm w-full"
-            />
-            <button onClick={() => { setIsSearching(false); setSearchQuery(''); }}>
-              <X size={18} className="text-slate-400" />
-            </button>
-          </div>
-        ) : (
-          <>
-            <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
-              <SheetTrigger
-                render={
-                  <button className="flex flex-1 items-center gap-3 cursor-pointer group text-left outline-none" />
-                }
-              >
-                <Avatar className="w-10 h-10 group-active:scale-95 transition-transform">
-                  <AvatarImage src={group?.avatar_url} />
-                  <AvatarFallback className="bg-emerald-100 text-emerald-700 font-bold">
-                    {group?.name.substring(0, 2).toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                  <h2 className="font-bold text-slate-900 truncate leading-tight">{group?.name}</h2>
-                  <div className={cn(
-                    "text-[10px] font-semibold uppercase tracking-wider transition-colors",
-                    typingUsers.length > 0 ? "text-emerald-500" : "text-emerald-600"
-                  )}>
-                    {typingUsers.length > 0 
-                      ? (
-                        <div className="flex gap-0.5 mt-0.5" key="typing-dots">
-                          <div className="w-1 h-1 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                          <div className="w-1 h-1 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                          <div className="w-1 h-1 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                        </div>
-                      ) 
-                      : onlineUsers.filter(id => id !== currentUser?.id).length > 0
-                        ? 'Online'
-                        : 'Offline'}
-                  </div>
-                </div>
-              </SheetTrigger>
-          <SheetContent side="right" className="w-full sm:max-w-md p-0 border-none">
-            <div className="h-full flex flex-col bg-slate-50">
-              <div className="relative h-64 bg-emerald-500 flex items-center justify-center overflow-hidden">
-                {group?.avatar_url ? (
-                  <img src={group.avatar_url} alt={group.name} className="w-full h-full object-cover" />
-                ) : (
-                  <div className="text-white font-bold text-8xl opacity-20">
-                    {group?.name.substring(0, 2).toUpperCase()}
-                  </div>
-                )}
-                
-                {isAdmin && (
-                  <div className="absolute top-4 right-4 z-10">
-                    <input 
-                      type="file" 
-                      ref={groupAvatarInputRef} 
-                      onChange={handleGroupAvatarUpload} 
-                      className="hidden" 
-                      accept="image/*"
-                    />
-                    <Button 
-                      size="icon" 
-                      variant="secondary" 
-                      className="rounded-full shadow-lg bg-white/20 backdrop-blur-md border-white/30 text-white hover:bg-white/40"
-                      onClick={() => groupAvatarInputRef.current?.click()}
-                      disabled={isUploadingGroupAvatar}
-                    >
-                      <Camera size={20} className={isUploadingGroupAvatar ? "animate-spin" : ""} />
-                    </Button>
-                  </div>
-                )}
 
-                <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/60 to-transparent">
-                  <h3 className="text-2xl font-bold text-white">{group?.name}</h3>
-                  <p className="text-white/80 text-sm">Created {group && format(new Date(group.created_at), 'MMM d, yyyy')}</p>
-                </div>
+            {isSearching ? (
+              <div className="flex-1 flex items-center gap-2 bg-slate-100 px-3 py-1 rounded-full">
+                <Search size={18} className="text-slate-400" />
+                <input
+                  autoFocus
+                  placeholder="Search messages..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="bg-transparent border-none outline-none text-sm w-full"
+                />
+                <button onClick={() => { setIsSearching(false); setSearchQuery(''); }}>
+                  <X size={18} className="text-slate-400" />
+                </button>
               </div>
-              
-              <div className="p-6 space-y-6">
-                {isAdmin && (
-                  <div className="bg-white p-4 rounded-3xl shadow-sm">
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Edit Group Info</h4>
-                    <form onSubmit={handleUpdateGroup} className="space-y-3">
-                      <Input 
-                        placeholder="Group Name" 
-                        value={editGroupName}
-                        onChange={(e) => setEditGroupName(e.target.value)}
-                        className="bg-slate-50 border-none rounded-xl h-10 text-sm"
-                      />
-                      <Input 
-                        placeholder="Description" 
-                        value={editGroupDesc}
-                        onChange={(e) => setEditGroupDesc(e.target.value)}
-                        className="bg-slate-50 border-none rounded-xl h-10 text-sm"
-                      />
-                      <Button 
-                        type="submit" 
-                        disabled={isUpdatingGroup}
-                        className="w-full bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl h-10 text-sm font-bold"
-                      >
-                        {isUpdatingGroup ? 'Updating...' : 'Save Changes'}
-                      </Button>
-                    </form>
-                  </div>
-                )}
-
-                <div className="bg-white p-4 rounded-3xl shadow-sm">
-                  <div className="flex items-center justify-between mb-4">
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Add Member</h4>
-                    <UserPlus size={18} className="text-emerald-500" />
-                  </div>
-                  <div className="space-y-3">
-                    <Input 
-                      placeholder="Search username..." 
-                      value={searchUser}
-                      onChange={(e) => handleSearchUser(e.target.value)}
-                      className="bg-slate-50 border-none rounded-xl h-10 text-sm"
-                    />
-                    <AnimatePresence>
-                      {searchResults.map(user => (
-                        <motion.div 
-                          key={user.id}
-                          initial={{ opacity: 0, x: -10 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: 10 }}
-                          className="flex items-center justify-between p-2 hover:bg-slate-50 rounded-xl transition-colors"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Avatar className="w-8 h-8">
-                              <AvatarImage src={user.avatar_url} />
-                              <AvatarFallback className="text-[10px]">{user.username.substring(0,2)}</AvatarFallback>
-                            </Avatar>
-                            <span className="text-sm font-medium text-slate-700">{user.username}</span>
-                          </div>
-                          <Button 
-                            size="sm" 
-                            variant="ghost" 
-                            className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 h-8 px-3 rounded-lg"
-                            onClick={() => addMember(user.id)}
-                            disabled={isAddingMember}
-                          >
-                            Add
-                          </Button>
-                        </motion.div>
-                      ))}
-                    </AnimatePresence>
-                  </div>
-                </div>
-
-                <div className="bg-white p-4 rounded-3xl shadow-sm">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Description</h4>
-                  <p className="text-slate-600">{group?.description || 'No description provided.'}</p>
-                </div>
-
-                <div className="bg-white p-4 rounded-3xl shadow-sm">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Members ({members.length})</h4>
-                  <div className="space-y-3">
-                    {members.map(member => (
-                      <div key={member.user_id} className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <Avatar className="w-10 h-10">
-                            <AvatarImage src={member.profiles?.avatar_url} />
-                            <AvatarFallback>{member.profiles?.username?.substring(0,2)}</AvatarFallback>
-                          </Avatar>
-                          <div>
-                            <p className="text-sm font-semibold text-slate-900">{member.profiles?.username}</p>
-                            <p className="text-[10px] text-slate-400">{member.role === 'admin' ? 'Admin' : 'Member'}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {member.role === 'admin' && (
-                            <Shield size={14} className="text-emerald-500" />
-                          )}
-                          {isAdmin && member.user_id !== currentUser?.id && (
-                            <div className="flex items-center gap-1">
-                              {member.role !== 'admin' && (
-                                <button 
-                                  onClick={() => promoteToAdmin(member.user_id)}
-                                  className="p-1 hover:bg-emerald-50 text-emerald-400 hover:text-emerald-600 rounded-full transition-colors"
-                                  title="Make Admin"
-                                >
-                                  <Shield size={14} />
-                                </button>
-                              )}
-                              <button 
-                                onClick={() => removeMember(member.user_id)}
-                                className="p-1 hover:bg-red-50 text-red-400 hover:text-red-600 rounded-full transition-colors"
-                                title="Remove Member"
-                              >
-                                <X size={14} />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-white p-4 rounded-3xl shadow-sm">
-                  <div className="flex items-center justify-between mb-4 cursor-pointer" onClick={() => setIsViewingAllMedia(true)}>
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Media, Links and Docs</h4>
-                    <ChevronRight size={18} className="text-slate-400" />
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    {messages.filter(m => m.type !== 'text').slice(0, 3).map(m => (
-                      <div key={m.id} className="aspect-square bg-slate-100 rounded-xl overflow-hidden cursor-pointer" onClick={() => setIsViewingAllMedia(true)}>
-                        {m.type === 'image' && <img src={m.file_url} className="w-full h-full object-cover" />}
-                        {m.type === 'video' && <div className="w-full h-full flex items-center justify-center bg-slate-800 text-white"><Video size={20} /></div>}
-                        {m.type === 'document' && <div className="w-full h-full flex items-center justify-center bg-emerald-50 text-emerald-600"><FileText size={20} /></div>}
-                      </div>
-                    ))}
-                    {messages.filter(m => m.type !== 'text').length > 3 && (
-                      <div 
-                        onClick={() => setIsViewingAllMedia(true)}
-                        className="aspect-square bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 border-2 border-dashed border-slate-200 cursor-pointer"
-                      >
-                        <Plus size={20} />
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="p-6 mt-auto space-y-2">
-                {group?.created_by === currentUser?.id && (
-                  <Button 
-                    variant="ghost" 
-                    onClick={deleteGroup}
-                    className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 rounded-2xl gap-2"
+            ) : (
+              <>
+                <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
+                  <SheetTrigger
+                    render={
+                      <button className="flex flex-1 items-center gap-3 cursor-pointer group text-left outline-none" />
+                    }
                   >
-                    <Trash2 size={20} /> Delete Group
-                  </Button>
-                )}
-                <Button 
-                  variant="ghost" 
-                  onClick={leaveGroup}
-                  className="w-full text-slate-600 hover:text-slate-700 hover:bg-slate-50 rounded-2xl gap-2"
-                >
-                  <LogOut size={20} /> Exit Group
-                </Button>
-                <Button 
-                  variant="ghost" 
-                  onClick={handleLogout}
-                  className="w-full text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-2xl gap-2 mt-4 border-t border-slate-100 pt-4"
-                >
-                  <LogOut size={20} /> Log Out
-                </Button>
-              </div>
-            </div>
-          </SheetContent>
-        </Sheet>
+                    <Avatar className="w-10 h-10 group-active:scale-95 transition-transform">
+                      <AvatarImage src={group?.avatar_url} />
+                      <AvatarFallback className="bg-emerald-100 text-emerald-700 font-bold">
+                        {group?.name.substring(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <h2 className="font-bold text-slate-900 truncate leading-tight">{group?.name}</h2>
+                      <div className={cn(
+                        "text-[10px] font-semibold uppercase tracking-wider transition-colors",
+                        typingUsers.length > 0 ? "text-emerald-500" : "text-emerald-600"
+                      )}>
+                        {typingUsers.length > 0
+                          ? (
+                            <div className="flex gap-0.5 mt-0.5" key="typing-dots">
+                              <div className="w-1 h-1 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                              <div className="w-1 h-1 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                              <div className="w-1 h-1 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                            </div>
+                          )
+                          : onlineUsers.filter(id => id !== currentUser?.id).length > 0
+                            ? 'Online'
+                            : 'Offline'}
+                      </div>
+                    </div>
+                  </SheetTrigger>
+                  <SheetContent side="right" className="w-full sm:max-w-md p-0 border-none">
+                    <div className="h-full flex flex-col bg-slate-50">
+                      <div className="relative h-64 bg-emerald-500 flex items-center justify-center overflow-hidden">
+                        {group?.avatar_url ? (
+                          <img src={group.avatar_url} alt={group.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="text-white font-bold text-8xl opacity-20">
+                            {group?.name.substring(0, 2).toUpperCase()}
+                          </div>
+                        )}
 
-        {!isSearching && (
-          <div className="flex items-center gap-4 text-slate-600">
-            <button onClick={() => setIsSearching(true)} className="p-1 hover:bg-slate-100 rounded-full transition-colors">
-              <Search size={20} />
-            </button>
-            <Video size={20} className="hover:text-emerald-600 transition-colors cursor-pointer" />
-            <Phone size={20} className="hover:text-emerald-600 transition-colors cursor-pointer" />
-            <button 
-              onClick={() => setIsViewingStarred(true)}
-              className="p-1 hover:bg-slate-100 rounded-full transition-colors text-yellow-500"
-              title="Starred Messages"
-            >
-              <Star size={20} fill="currentColor" />
-            </button>
-            <MoreVertical size={20} onClick={() => setIsSheetOpen(true)} className="hover:text-emerald-600 transition-colors cursor-pointer" />
-          </div>
+                        {isAdmin && (
+                          <div className="absolute top-4 right-4 z-10">
+                            <input
+                              type="file"
+                              ref={groupAvatarInputRef}
+                              onChange={handleGroupAvatarUpload}
+                              className="hidden"
+                              accept="image/*"
+                            />
+                            <Button
+                              size="icon"
+                              variant="secondary"
+                              className="rounded-full shadow-lg bg-white/20 backdrop-blur-md border-white/30 text-white hover:bg-white/40"
+                              onClick={() => groupAvatarInputRef.current?.click()}
+                              disabled={isUploadingGroupAvatar}
+                            >
+                              <Camera size={20} className={isUploadingGroupAvatar ? "animate-spin" : ""} />
+                            </Button>
+                          </div>
+                        )}
+
+                        <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/60 to-transparent">
+                          <h3 className="text-2xl font-bold text-white">{group?.name}</h3>
+                          <p className="text-white/80 text-sm">Created {group && format(new Date(group.created_at), 'MMM d, yyyy')}</p>
+                        </div>
+                      </div>
+
+                      <div className="p-6 space-y-6">
+                        {isAdmin && (
+                          <div className="bg-white p-4 rounded-3xl shadow-sm">
+                            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Edit Group Info</h4>
+                            <form onSubmit={handleUpdateGroup} className="space-y-3">
+                              <Input
+                                placeholder="Group Name"
+                                value={editGroupName}
+                                onChange={(e) => setEditGroupName(e.target.value)}
+                                className="bg-slate-50 border-none rounded-xl h-10 text-sm"
+                              />
+                              <Input
+                                placeholder="Description"
+                                value={editGroupDesc}
+                                onChange={(e) => setEditGroupDesc(e.target.value)}
+                                className="bg-slate-50 border-none rounded-xl h-10 text-sm"
+                              />
+                              <Button
+                                type="submit"
+                                disabled={isUpdatingGroup}
+                                className="w-full bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl h-10 text-sm font-bold"
+                              >
+                                {isUpdatingGroup ? 'Updating...' : 'Save Changes'}
+                              </Button>
+                            </form>
+                          </div>
+                        )}
+
+                        <div className="bg-white p-4 rounded-3xl shadow-sm">
+                          <div className="flex items-center justify-between mb-4">
+                            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Add Member</h4>
+                            <UserPlus size={18} className="text-emerald-500" />
+                          </div>
+                          <div className="space-y-3">
+                            <Input
+                              placeholder="Search username..."
+                              value={searchUser}
+                              onChange={(e) => handleSearchUser(e.target.value)}
+                              className="bg-slate-50 border-none rounded-xl h-10 text-sm"
+                            />
+                            <AnimatePresence>
+                              {searchResults.map(user => (
+                                <motion.div
+                                  key={user.id}
+                                  initial={{ opacity: 0, x: -10 }}
+                                  animate={{ opacity: 1, x: 0 }}
+                                  exit={{ opacity: 0, x: 10 }}
+                                  className="flex items-center justify-between p-2 hover:bg-slate-50 rounded-xl transition-colors"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <Avatar className="w-8 h-8">
+                                      <AvatarImage src={user.avatar_url} />
+                                      <AvatarFallback className="text-[10px]">{user.username.substring(0, 2)}</AvatarFallback>
+                                    </Avatar>
+                                    <span className="text-sm font-medium text-slate-700">{user.username}</span>
+                                  </div>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 h-8 px-3 rounded-lg"
+                                    onClick={() => addMember(user.id)}
+                                    disabled={isAddingMember}
+                                  >
+                                    Add
+                                  </Button>
+                                </motion.div>
+                              ))}
+                            </AnimatePresence>
+                          </div>
+                        </div>
+
+                        <div className="bg-white p-4 rounded-3xl shadow-sm">
+                          <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Description</h4>
+                          <p className="text-slate-600">{group?.description || 'No description provided.'}</p>
+                        </div>
+
+                        <div className="bg-white p-4 rounded-3xl shadow-sm">
+                          <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Members ({members.length})</h4>
+                          <div className="space-y-3">
+                            {members.map(member => (
+                              <div key={member.user_id} className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <Avatar className="w-10 h-10">
+                                    <AvatarImage src={member.profiles?.avatar_url} />
+                                    <AvatarFallback>{member.profiles?.username?.substring(0, 2)}</AvatarFallback>
+                                  </Avatar>
+                                  <div>
+                                    <p className="text-sm font-semibold text-slate-900">{member.profiles?.username}</p>
+                                    <p className="text-[10px] text-slate-400">{member.role === 'admin' ? 'Admin' : 'Member'}</p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {member.role === 'admin' && (
+                                    <Shield size={14} className="text-emerald-500" />
+                                  )}
+                                  {isAdmin && member.user_id !== currentUser?.id && (
+                                    <div className="flex items-center gap-1">
+                                      {member.role !== 'admin' && (
+                                        <button
+                                          onClick={() => promoteToAdmin(member.user_id)}
+                                          className="p-1 hover:bg-emerald-50 text-emerald-400 hover:text-emerald-600 rounded-full transition-colors"
+                                          title="Make Admin"
+                                        >
+                                          <Shield size={14} />
+                                        </button>
+                                      )}
+                                      <button
+                                        onClick={() => removeMember(member.user_id)}
+                                        className="p-1 hover:bg-red-50 text-red-400 hover:text-red-600 rounded-full transition-colors"
+                                        title="Remove Member"
+                                      >
+                                        <X size={14} />
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="bg-white p-4 rounded-3xl shadow-sm">
+                          <div className="flex items-center justify-between mb-4 cursor-pointer" onClick={() => setIsViewingAllMedia(true)}>
+                            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Media, Links and Docs</h4>
+                            <ChevronRight size={18} className="text-slate-400" />
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            {messages.filter(m => m.type !== 'text').slice(0, 3).map(m => (
+                              <div key={m.id} className="aspect-square bg-slate-100 rounded-xl overflow-hidden cursor-pointer" onClick={() => setIsViewingAllMedia(true)}>
+                                {m.type === 'image' && <img src={m.file_url} className="w-full h-full object-cover" />}
+                                {m.type === 'video' && <div className="w-full h-full flex items-center justify-center bg-slate-800 text-white"><Video size={20} /></div>}
+                                {m.type === 'document' && <div className="w-full h-full flex items-center justify-center bg-emerald-50 text-emerald-600"><FileText size={20} /></div>}
+                              </div>
+                            ))}
+                            {messages.filter(m => m.type !== 'text').length > 3 && (
+                              <div
+                                onClick={() => setIsViewingAllMedia(true)}
+                                className="aspect-square bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 border-2 border-dashed border-slate-200 cursor-pointer"
+                              >
+                                <Plus size={20} />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="p-6 mt-auto space-y-2">
+                        {group?.created_by === currentUser?.id && (
+                          <Button
+                            variant="ghost"
+                            onClick={deleteGroup}
+                            className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 rounded-2xl gap-2"
+                          >
+                            <Trash2 size={20} /> Delete Group
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          onClick={leaveGroup}
+                          className="w-full text-slate-600 hover:text-slate-700 hover:bg-slate-50 rounded-2xl gap-2"
+                        >
+                          <LogOut size={20} /> Exit Group
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          onClick={handleLogout}
+                          className="w-full text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-2xl gap-2 mt-4 border-t border-slate-100 pt-4"
+                        >
+                          <LogOut size={20} /> Log Out
+                        </Button>
+                      </div>
+                    </div>
+                  </SheetContent>
+                </Sheet>
+
+                {!isSearching && (
+                  <div className="flex items-center gap-4 text-slate-600">
+                    <button onClick={() => setIsSearching(true)} className="p-1 hover:bg-slate-100 rounded-full transition-colors">
+                      <Search size={20} />
+                    </button>
+                    <Video size={20} className="hidden sm:block hover:text-emerald-600 transition-colors cursor-pointer" />
+                    <Phone size={20} className="hidden sm:block hover:text-emerald-600 transition-colors cursor-pointer" />
+                    <button
+                      onClick={() => setIsViewingStarred(true)}
+                      className="p-1 hover:bg-slate-100 rounded-full transition-colors text-yellow-500 hidden xs:block"
+                      title="Starred Messages"
+                    >
+                      <Star size={20} fill="currentColor" />
+                    </button>
+                    <MoreVertical size={20} onClick={() => setIsSheetOpen(true)} className="hover:text-emerald-600 transition-colors cursor-pointer" />
+                  </div>
+                )}
+              </>
+            )}
+          </>
         )}
-      </>
-    )}
-    </>
-    )}
-  </header>
+      </header>
 
       {/* Messages Area */}
       <div className="flex-1 px-4 py-6 overflow-y-auto touch-pan-y relative message-area-scroll">
@@ -1187,7 +1187,7 @@ export default function Chat() {
           <div className="fixed bottom-24 right-6 left-6 z-30 pointer-events-none">
             <div className="flex flex-col gap-2 items-end">
               {Object.entries(uploadProgress).map(([name, progress]) => (
-                <motion.div 
+                <motion.div
                   key={name}
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
@@ -1199,7 +1199,7 @@ export default function Chat() {
                     <span>{progress}%</span>
                   </div>
                   <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                    <motion.div 
+                    <motion.div
                       className="bg-emerald-500 h-full"
                       animate={{ width: `${progress}%` }}
                     />
@@ -1259,18 +1259,18 @@ export default function Chat() {
                       setSelectedMessageId(msg.id);
                     }}
                     onClick={() => {
-                        // Desktop fallback or toggle
-                        if (selectedMessageId) {
-                            setSelectedMessageId(null);
-                        }
+                      // Desktop fallback or toggle
+                      if (selectedMessageId) {
+                        setSelectedMessageId(null);
+                      }
                     }}
                     className="relative cursor-pointer"
                   >
                     <div
                       className={cn(
                         "relative px-4 py-2 rounded-2xl shadow-sm text-sm transition-all text-left outline-none",
-                        isMe 
-                          ? "bg-emerald-500 text-white rounded-br-none" 
+                        isMe
+                          ? "bg-emerald-500 text-white rounded-br-none"
                           : "bg-white text-slate-800 rounded-bl-none",
                         selectedMessageId === msg.id && "ring-4 ring-emerald-500/30 scale-[0.98]"
                       )}
@@ -1287,21 +1287,21 @@ export default function Chat() {
                           <p className="truncate">{msg.reply_to.content}</p>
                         </div>
                       )}
-                      
+
                       {msg.type === 'image' && msg.file_url && (
-                        <div 
+                        <div
                           className="mb-2 rounded-lg overflow-hidden border border-white/20 cursor-zoom-in"
                           onClick={(e) => {
                             e.stopPropagation();
                             setViewingImage(msg.file_url || null);
                           }}
                         >
-                          <motion.img 
+                          <motion.img
                             layoutId={`img-${msg.id}`}
-                            src={msg.file_url} 
-                            alt="Shared" 
-                            className="max-w-full h-auto object-cover" 
-                            referrerPolicy="no-referrer" 
+                            src={msg.file_url}
+                            alt="Shared"
+                            className="max-w-full h-auto object-cover"
+                            referrerPolicy="no-referrer"
                             onError={(e) => {
                               (e.target as HTMLImageElement).src = 'https://placehold.co/600x400/emerald/white?text=Image+Not+Found';
                             }}
@@ -1316,9 +1316,9 @@ export default function Chat() {
                       )}
 
                       {msg.type === 'document' && msg.file_url && (
-                        <a 
-                          href={msg.file_url} 
-                          target="_blank" 
+                        <a
+                          href={msg.file_url}
+                          target="_blank"
                           rel="noopener noreferrer"
                           className="flex items-center gap-2 p-2 bg-black/5 rounded-lg mb-2 hover:bg-black/10 transition-colors"
                         >
@@ -1339,8 +1339,8 @@ export default function Chat() {
                         {isMe && (
                           <span className={cn(
                             "text-[10px] ml-1",
-                            msg.read_by && msg.read_by.length >= (members.length - 1) 
-                              ? "text-blue-400" 
+                            msg.read_by && msg.read_by.length >= (members.length - 1)
+                              ? "text-blue-400"
                               : "text-emerald-100"
                           )}>
                             {msg.read_by && msg.read_by.length >= (members.length - 1) ? (
@@ -1370,7 +1370,7 @@ export default function Chat() {
 
                     <AnimatePresence>
                       {selectedMessageId === msg.id && (
-                        <motion.div 
+                        <motion.div
                           initial={{ opacity: 0, y: 10, scale: 0.9 }}
                           animate={{ opacity: 1, y: 0, scale: 1 }}
                           exit={{ opacity: 0, y: 10, scale: 0.9 }}
@@ -1380,7 +1380,7 @@ export default function Chat() {
                           )}
                         >
                           {['❤️', '👍', '😂', '😮', '😢', '🙏'].map(emoji => (
-                            <button 
+                            <button
                               key={emoji}
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1399,7 +1399,7 @@ export default function Chat() {
                 </motion.div>
               );
             })}
-            
+
             {typingUsers.length > 0 && (
               <motion.div
                 key="chat-typing-dots"
@@ -1415,16 +1415,16 @@ export default function Chat() {
               </motion.div>
             )}
           </AnimatePresence>
-            
+
           <div ref={scrollRef} key="scroll-marker" />
         </div>
       </div>
 
       {/* Input Area */}
-      <div className="p-4 bg-white/80 backdrop-blur-xl border-t border-slate-200 z-40">
+      <div className="p-4 bg-white/80 backdrop-blur-xl border-t border-slate-200 z-40 flex-shrink-0">
         <AnimatePresence>
           {replyingTo && (
-            <motion.div 
+            <motion.div
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
@@ -1453,10 +1453,10 @@ export default function Chat() {
               className="hidden"
               accept="image/*,video/*,application/pdf,.doc,.docx"
             />
-            <Button 
-              type="button" 
-              variant="ghost" 
-              size="icon" 
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
               className="text-slate-400 hover:text-emerald-500 rounded-full"
               onClick={() => fileInputRef.current?.click()}
               disabled={isUploading}
@@ -1464,7 +1464,7 @@ export default function Chat() {
               <Paperclip size={24} className={isUploading ? "animate-spin" : ""} />
             </Button>
           </div>
-          
+
           <div className="flex-1 relative">
             <Input
               value={newMessage}
@@ -1479,17 +1479,17 @@ export default function Chat() {
 
           <motion.div whileTap={{ scale: 0.9 }}>
             {newMessage.trim() ? (
-              <Button 
-                type="submit" 
-                size="icon" 
+              <Button
+                type="submit"
+                size="icon"
                 className="bg-emerald-500 hover:bg-emerald-600 text-white rounded-full w-12 h-12 shadow-lg shadow-emerald-200"
               >
                 <Send size={20} />
               </Button>
             ) : (
-              <Button 
-                type="button" 
-                size="icon" 
+              <Button
+                type="button"
+                size="icon"
                 className="bg-emerald-500 hover:bg-emerald-600 text-white rounded-full w-12 h-12 shadow-lg shadow-emerald-200"
               >
                 <Mic size={20} />
@@ -1525,9 +1525,9 @@ export default function Chat() {
                       <FileText size={24} />
                     </div>
                   )}
-                  <a 
-                    href={m.file_url} 
-                    target="_blank" 
+                  <a
+                    href={m.file_url}
+                    target="_blank"
                     rel="noopener noreferrer"
                     className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
                   >
@@ -1557,14 +1557,14 @@ export default function Chat() {
           <div className="h-[300px] pr-4 overflow-y-auto">
             <div className="space-y-2">
               {groups.map(g => (
-                <div 
-                  key={g.id} 
+                <div
+                  key={g.id}
                   onClick={() => forwardMessage(g.id)}
                   className="flex items-center gap-3 p-3 hover:bg-slate-50 rounded-2xl cursor-pointer transition-colors border border-transparent hover:border-slate-100"
                 >
                   <Avatar className="w-10 h-10">
                     <AvatarImage src={g.avatar_url} />
-                    <AvatarFallback>{g.name.substring(0,2)}</AvatarFallback>
+                    <AvatarFallback>{g.name.substring(0, 2)}</AvatarFallback>
                   </Avatar>
                   <span className="font-semibold text-slate-700">{g.name}</span>
                 </div>
@@ -1584,7 +1584,7 @@ export default function Chat() {
             onClick={() => setViewingImage(null)}
             className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out"
           >
-            <motion.button 
+            <motion.button
               className="absolute top-6 right-6 text-white/50 hover:text-white p-2"
               onClick={() => setViewingImage(null)}
             >
@@ -1626,18 +1626,18 @@ export default function Chat() {
                     </div>
                     <p className="text-sm text-slate-700">{m.content}</p>
                     {m.file_url && (
-                       <div 
+                      <div
                         className="mt-2 rounded-xl overflow-hidden cursor-pointer"
                         onClick={() => { setViewingImage(m.file_url || null); setIsViewingStarred(false); }}
                       >
-                         <img 
-                           src={m.file_url} 
-                           className="w-full max-h-40 object-cover" 
-                           onError={(e) => {
-                             (e.target as HTMLImageElement).src = 'https://placehold.co/600x400/emerald/white?text=Not+Found';
-                           }}
-                         />
-                       </div>
+                        <img
+                          src={m.file_url}
+                          className="w-full max-h-40 object-cover"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = 'https://placehold.co/600x400/emerald/white?text=Not+Found';
+                          }}
+                        />
+                      </div>
                     )}
                   </div>
                 ))}

@@ -157,9 +157,9 @@ export default function Home() {
   );
 
   return (
-    <div className="flex flex-col h-full bg-white relative overflow-hidden">
+    <div className="flex flex-col h-[100dvh] bg-white overflow-hidden">
       {/* Header */}
-      <header className="px-4 py-4 flex items-center justify-between bg-white/80 backdrop-blur-md sticky top-0 z-40 border-b border-slate-50">
+      <header className="px-4 py-4 flex items-center justify-between bg-white/80 backdrop-blur-md z-40 border-b border-slate-50 flex-shrink-0">
         <h1 className="text-2xl font-bold text-emerald-600 tracking-tight">WhatsApp Pro</h1>
         <div className="flex items-center gap-4 text-slate-600">
           <Camera size={22} className="cursor-pointer hover:text-emerald-600 transition-colors" />
@@ -168,7 +168,7 @@ export default function Home() {
       </header>
 
       {/* Search Bar */}
-      <div className="px-4 mb-4">
+      <div className="px-4 mb-4 flex-shrink-0">
         <div className="relative group">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-emerald-500 transition-colors" size={18} />
           <Input 
