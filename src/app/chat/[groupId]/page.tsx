@@ -4,7 +4,7 @@ import * as React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter as useNavigate, useParams } from 'next/navigation';
 
-import { ArrowLeft, Phone, Video, MoreVertical, Send, Paperclip, Smile, Image as ImageIcon, FileText, Mic, Plus, X, UserPlus, Shield, Search, LogOut, Camera, ChevronRight, Trash2, ExternalLink, Star } from 'lucide-react';
+import { ArrowLeft, Phone, Video, MoreVertical, Send, Paperclip, Smile, Image as ImageIcon, FileText, Mic, Plus, X, UserPlus, Shield, Search, LogOut, Camera, ChevronRight, Trash2, ExternalLink, Star, Bell, BellOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
@@ -45,13 +45,93 @@ export default function Chat() {
   const [activeReactionTab, setActiveReactionTab] = useState<string>('All');
   const [reactionProfiles, setReactionProfiles] = useState<Record<string, any>>({});
   const [isFetchingReactions, setIsFetchingReactions] = useState(false);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
+  const [isSubscribing, setIsSubscribing] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!groupId) return;
 
     fetchInitialData();
+    checkNotificationPermission();
   }, [groupId]);
+
+  async function checkNotificationPermission() {
+    if ('Notification' in window) {
+      setNotificationPermission(Notification.permission);
+    }
+  }
+
+  function urlBase64ToUint8Array(base64String: string) {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding)
+      .replace(/-/g, '+')
+      .replace(/_/g, '/');
+
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  }
+
+  async function subscribeToPush() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      toast.error('Push notifications are not supported on this browser.');
+      return;
+    }
+
+    setIsSubscribing(true);
+    try {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      
+      if (permission === 'denied') {
+        toast.error('Notifications are blocked by Chrome. Please click the "Lock" icon in the address bar and set Notifications to "Allow".', {
+          duration: 6000,
+        });
+        return;
+      }
+
+      if (permission !== 'granted') {
+        throw new Error('Permission not granted');
+      }
+
+      const registration = await navigator.serviceWorker.ready;
+      
+      const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+      if (!vapidPublicKey) {
+        throw new Error('VAPID public key not found in environment');
+      }
+
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+      });
+
+      const { endpoint, keys } = JSON.parse(JSON.stringify(subscription));
+
+      const { error } = await supabase
+        .from('push_subscriptions')
+        .upsert({
+          user_id: currentUser.id,
+          endpoint,
+          p256dh: keys.p256dh,
+          auth: keys.auth
+        }, { onConflict: 'user_id, endpoint' });
+
+      if (error) throw error;
+
+      toast.success('Notifications enabled successfully!');
+    } catch (error: any) {
+      console.error('Push subscription error:', error);
+      toast.error(error.message || 'Failed to enable notifications');
+    } finally {
+      setIsSubscribing(false);
+    }
+  }
 
   useEffect(() => {
     if (!groupId || !currentUser) return;
@@ -331,6 +411,9 @@ export default function Chat() {
         }
         throw error;
       }
+      
+      // 3. Trigger Push Notifications
+      triggerPushNotification(`${currentUser.username || 'Someone'} (${group?.name})`, messageContent);
     } catch (error) {
       console.error('Error sending message:', error);
       toast.error('Failed to send message');
@@ -437,6 +520,44 @@ export default function Chat() {
       }
     } catch (error: any) {
       toast.error(error.message);
+    }
+  }
+
+  async function triggerPushNotification(messageTitle: string, messageBody: string) {
+    if (!groupId || !currentUser || !members.length) return;
+
+    try {
+      const otherMembers = members.filter(m => m.user_id !== currentUser.id);
+      if (otherMembers.length === 0) return;
+
+      const { data: subscriptions, error } = await supabase
+        .from('push_subscriptions')
+        .select('*')
+        .in('user_id', otherMembers.map(m => m.user_id));
+
+      if (error || !subscriptions || subscriptions.length === 0) return;
+
+      for (const sub of subscriptions) {
+        try {
+          await fetch('/api/push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              subscription: {
+                endpoint: sub.endpoint,
+                keys: { p256dh: sub.p256dh, auth: sub.auth }
+              },
+              title: messageTitle,
+              body: messageBody,
+              url: window.location.href
+            })
+          });
+        } catch (pushError) {
+          console.error('Individual push failed:', pushError);
+        }
+      }
+    } catch (err) {
+      console.error('Trigger push error:', err);
     }
   }
 
@@ -688,6 +809,12 @@ export default function Chat() {
           });
 
         if (msgError) throw msgError;
+        
+        // Trigger Push Notification for file/media
+        triggerPushNotification(
+          `${currentUser.username || 'Someone'} (${group?.name})`,
+          `Shared a ${type === 'image' ? 'photo' : type === 'video' ? 'video' : 'file'}: ${file.name}`
+        );
 
         // Remove from progress after a delay
         setTimeout(() => {
@@ -1292,6 +1419,26 @@ export default function Chat() {
                   <div className="flex items-center gap-4 text-slate-600">
                     <button onClick={() => setIsSearching(true)} className="p-1 hover:bg-slate-100 rounded-full transition-colors">
                       <Search size={20} />
+                    </button>
+                    <button 
+                      onClick={subscribeToPush} 
+                      className={cn(
+                        "p-1 hover:bg-slate-100 rounded-full transition-colors relative group/bell",
+                        notificationPermission === 'granted' ? "text-emerald-500" : "text-slate-400"
+                      )}
+                      title={notificationPermission === 'granted' ? "Notifications Enabled" : "Enable Notifications"}
+                      disabled={isSubscribing}
+                    >
+                      {isSubscribing ? (
+                        <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                      ) : notificationPermission === 'granted' ? (
+                        <Bell size={20} fill="currentColor" className="group-hover/bell:scale-110 transition-transform" />
+                      ) : (
+                        <BellOff size={20} className="group-hover/bell:scale-110 transition-transform" />
+                      )}
+                      {notificationPermission === 'default' && (
+                        <div className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full border-2 border-white animate-pulse" />
+                      )}
                     </button>
                     <Video size={20} className="hidden sm:block hover:text-emerald-600 transition-colors cursor-pointer" />
                     <Phone size={20} className="hidden sm:block hover:text-emerald-600 transition-colors cursor-pointer" />

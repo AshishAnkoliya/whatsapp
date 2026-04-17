@@ -18,6 +18,7 @@ import { Toaster } from "sonner";
 export const metadata: Metadata = {
   title: "WhatsApp Pro",
   description: "High-end mobile-first chat application",
+  manifest: "/manifest.json",
 };
 
 export const viewport: Viewport = {
@@ -25,6 +26,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  themeColor: "#059669",
 };
 
 export default function RootLayout({
@@ -45,6 +47,21 @@ export default function RootLayout({
           <ClientLayout>{children}</ClientLayout>
           <Toaster position="top-center" richColors />
         </main>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              if ('serviceWorker' in navigator) {
+                window.addEventListener('load', function() {
+                  navigator.serviceWorker.register('/sw.js').then(function(registration) {
+                    console.log('ServiceWorker registration successful with scope: ', registration.scope);
+                  }, function(err) {
+                    console.log('ServiceWorker registration failed: ', err);
+                  });
+                });
+              }
+            `,
+          }}
+        />
       </body>
     </html>
   );
