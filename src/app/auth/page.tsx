@@ -195,62 +195,62 @@ export default function Auth() {
                   >
                     <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.2em] ml-1">Username</label>
                     <div className="relative group">
-                      <Input
-                        placeholder="johndoe"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        required
-                        className="bg-slate-50/50 border-slate-200 rounded-2xl h-14 px-4 shadow-sm transition-all focus-visible:ring-emerald-500/10 focus-visible:border-emerald-500 group-hover:border-slate-300 focus-visible:bg-white placeholder:text-slate-400 placeholder:font-normal"
-                      />
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {!isUpdatePasswordMode && (
-                <motion.div variants={itemVariants} className="space-y-2">
-                  <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.2em] ml-1">Email Address</label>
-                  <div className="relative group">
                     <Input
-                      type="email"
-                      placeholder="name@example.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="johndoe"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
                       required
-                      className="bg-slate-50/50 border-slate-200 rounded-2xl h-14 px-4 shadow-sm transition-all focus-visible:ring-emerald-500/10 focus-visible:border-emerald-500 group-hover:border-slate-300 focus-visible:bg-white placeholder:text-slate-400 placeholder:font-normal"
+                      className="bg-slate-50 border border-slate-200/60 rounded-2xl h-14 px-4 shadow-sm transition-all focus-visible:ring-emerald-500/10 focus-visible:border-emerald-500 placeholder:text-slate-400/70 placeholder:font-normal"
                     />
                   </div>
                 </motion.div>
               )}
+            </AnimatePresence>
 
-              {!isResetMode && (
-                <motion.div variants={itemVariants} className="space-y-2">
-                  <div className="flex items-center justify-between ml-1">
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.2em]">
-                      {isUpdatePasswordMode ? 'New Password' : 'Password'}
-                    </label>
-                    {!isSignUp && !isUpdatePasswordMode && (
-                      <button 
-                        type="button"
-                        onClick={() => setIsResetMode(true)}
-                        className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700 uppercase tracking-wider cursor-pointer"
-                      >
-                        Forgot?
-                      </button>
-                    )}
-                  </div>
-                  <div className="relative group">
-                    <Input
-                      type="password"
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                      className="bg-slate-50/50 border-slate-200 rounded-2xl h-14 px-4 shadow-sm transition-all focus-visible:ring-emerald-500/10 focus-visible:border-emerald-500 group-hover:border-slate-300 focus-visible:bg-white placeholder:text-slate-400 placeholder:font-normal"
-                    />
-                  </div>
-                </motion.div>
-              )}
+            {!isUpdatePasswordMode && (
+              <motion.div variants={itemVariants} className="space-y-2">
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.2em] ml-1">Email Address</label>
+                <div className="relative group">
+                  <Input
+                    type="email"
+                    placeholder="name@example.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    className="bg-slate-50 border border-slate-200/60 rounded-2xl h-14 px-4 shadow-sm transition-all focus-visible:ring-emerald-500/10 focus-visible:border-emerald-500 placeholder:text-slate-400/70 placeholder:font-normal"
+                  />
+                </div>
+              </motion.div>
+            )}
+
+            {!isResetMode && (
+              <motion.div variants={itemVariants} className="space-y-2">
+                <div className="flex items-center justify-between ml-1">
+                  <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.2em]">
+                    {isUpdatePasswordMode ? 'New Password' : 'Password'}
+                  </label>
+                  {!isSignUp && !isUpdatePasswordMode && (
+                    <button 
+                      type="button"
+                      onClick={() => setIsResetMode(true)}
+                      className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700 uppercase tracking-wider cursor-pointer"
+                    >
+                      Forgot?
+                    </button>
+                  )}
+                </div>
+                <div className="relative group">
+                  <Input
+                    type="password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    className="bg-slate-50 border border-slate-200/60 rounded-2xl h-14 px-4 shadow-sm transition-all focus-visible:ring-emerald-500/10 focus-visible:border-emerald-500 placeholder:text-slate-400/70 placeholder:font-normal"
+                  />
+                </div>
+              </motion.div>
+            )}
             </CardContent>
 
             <CardFooter className="flex flex-col gap-5 px-8 pb-10 pt-6 border-none bg-transparent">

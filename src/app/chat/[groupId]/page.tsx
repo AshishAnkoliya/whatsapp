@@ -41,6 +41,10 @@ export default function Chat() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [viewingReactionsMsg, setViewingReactionsMsg] = useState<Message | null>(null);
+  const [activeReactionTab, setActiveReactionTab] = useState<string>('All');
+  const [reactionProfiles, setReactionProfiles] = useState<Record<string, any>>({});
+  const [isFetchingReactions, setIsFetchingReactions] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -436,47 +440,135 @@ export default function Chat() {
     }
   }
 
+  async function fetchReactionProfiles(msg: Message) {
+    if (!msg.reactions) return;
+    
+    // Extract unique user IDs from all reaction types
+    const userIds = Array.from(new Set(
+      Object.values(msg.reactions).flat()
+    ));
+
+    if (userIds.length === 0) return;
+
+    // Filter out IDs already in cache
+    const missingIds = userIds.filter(id => !reactionProfiles[id]);
+    if (missingIds.length === 0) return;
+
+    setIsFetchingReactions(true);
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, username, avatar_url')
+        .in('id', missingIds);
+
+      if (error) throw error;
+
+      if (data) {
+        const newProfiles = { ...reactionProfiles };
+        data.forEach(profile => {
+          newProfiles[profile.id] = profile;
+        });
+        setReactionProfiles(newProfiles);
+      }
+    } catch (error: any) {
+      console.error('Error fetching reaction profiles:', error);
+    } finally {
+      setIsFetchingReactions(false);
+    }
+  }
+
   async function handleGroupAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file || !groupId || !isAdmin) return;
+    if (!file) {
+      toast.error('No file selected');
+      return;
+    }
+    
+    if (!groupId) {
+      toast.error('Group ID missing');
+      return;
+    }
 
+    toast.info(`Selected: ${file.name}. Starting upload...`);
     setIsUploadingGroupAvatar(true);
+    
     try {
       const fileExt = file.name.split('.').pop();
-      const fileName = `group_${groupId}_${Math.random()}.${fileExt}`;
+      const fileName = `group_${groupId}_${Date.now()}.${fileExt}`;
       const filePath = `avatars/${fileName}`;
 
+      toast.loading('Uploading to storage...', { id: 'group-upload' });
       const { error: uploadError } = await supabase.storage
         .from('chat-media')
         .upload(filePath, file);
 
       if (uploadError) {
+        toast.dismiss('group-upload');
         if (uploadError.message.includes('Bucket not found') || uploadError.message.includes('row-level security policy')) {
           const localUrl = URL.createObjectURL(file);
           setGroup({ ...group!, avatar_url: localUrl });
-          toast.info('Dev Mode: Using local preview (RLS Policy issue)');
+          toast.info('Dev Mode: Using preview (RLS Issue)');
           return;
         }
         throw uploadError;
       }
 
+      toast.loading('Updating group records...', { id: 'group-upload' });
       const { data: { publicUrl } } = supabase.storage
         .from('chat-media')
         .getPublicUrl(filePath);
 
-      const { error: updateError } = await supabase
+      const { data: updateData, error: updateError } = await supabase
         .from('groups')
         .update({ avatar_url: publicUrl })
-        .eq('id', groupId);
+        .eq('id', groupId)
+        .select();
 
-      if (updateError) throw updateError;
+      if (updateError) {
+        console.error('Database Update Error:', updateError);
+        throw new Error(`Database rejected the update: ${updateError.message}`);
+      }
 
-      setGroup({ ...group!, avatar_url: publicUrl });
-      toast.success('Group avatar updated!');
+      // If no data returned, it means RLS blocked the update despite no error being thrown
+      if (!updateData || updateData.length === 0) {
+        console.warn('Update matched 0 rows. Check RLS policies or if you are the creator.');
+        // We still show the local preview so the user isn't confused, but warn them
+        setGroup(prev => prev ? { ...prev, avatar_url: publicUrl } : null);
+        toast.warning('Photo changed locally, but database permissions might be blocking the save.', { duration: 5000 });
+      } else {
+        setGroup(updateData[0]);
+        toast.success('Group photo saved to database!', { id: 'group-upload' });
+      }
+
+      // Still re-fetch to stay in sync with any other server-side changes
+      const { data: refreshedGroup } = await supabase
+        .from('groups')
+        .select('*')
+        .eq('id', groupId)
+        .single();
+      
+      if (refreshedGroup) {
+        setGroup(refreshedGroup);
+        setEditGroupName(refreshedGroup.name);
+        setEditGroupDesc(refreshedGroup.description || '');
+      }
+
+      // Insert system notification
+      await supabase
+        .from('messages')
+        .insert({
+          group_id: groupId,
+          sender_id: currentUser.id,
+          content: `[SYSTEM]: ${currentUser.username || 'Someone'} changed the group photo`,
+          type: 'text'
+        });
     } catch (error: any) {
-      toast.error(error.message);
+      toast.dismiss('group-upload');
+      toast.error(`Upload failed: ${error.message}`);
+      console.error('Upload Error:', error);
     } finally {
       setIsUploadingGroupAvatar(false);
+      if (e.target) e.target.value = ''; // Reset input
     }
   }
 
@@ -633,7 +725,28 @@ export default function Chat() {
 
       if (error) throw error;
       setGroup({ ...group!, name: editGroupName, description: editGroupDesc });
-      toast.success('Group updated!');
+      // Insert specific system notifications based on what changed
+      if (group?.name !== editGroupName) {
+        await supabase
+          .from('messages')
+          .insert({
+            group_id: groupId,
+            sender_id: currentUser.id,
+            content: `[SYSTEM]: ${currentUser.username || 'Someone'} changed the group name to "${editGroupName}"`,
+            type: 'text'
+          });
+      }
+      
+      if ((group?.description || '') !== editGroupDesc) {
+        await supabase
+          .from('messages')
+          .insert({
+            group_id: groupId,
+            sender_id: currentUser.id,
+            content: `[SYSTEM]: ${currentUser.username || 'Someone'} changed the group description`,
+            type: 'text'
+          });
+      }
     } catch (error: any) {
       toast.error(error.message);
     } finally {
@@ -807,6 +920,24 @@ export default function Chat() {
         else throw error;
       } else {
         toast.success('Member added!');
+
+        // Fetch new member's name for the notification
+        const { data: userData } = await supabase
+          .from('profiles')
+          .select('username')
+          .eq('id', userId)
+          .single();
+
+        // Insert system notification
+        await supabase
+          .from('messages')
+          .insert({
+            group_id: groupId,
+            sender_id: currentUser.id,
+            content: `[SYSTEM]: ${currentUser.username || 'Someone'} added ${userData?.username || 'a new member'}`,
+            type: 'text'
+          });
+
         setSearchUser('');
         setSearchResults([]);
       }
@@ -947,71 +1078,75 @@ export default function Chat() {
                       </div>
                     </div>
                   </SheetTrigger>
-                  <SheetContent side="right" className="w-full sm:max-w-md p-0 border-none">
+                  <SheetContent side="right" className="w-[85vw] sm:max-w-md p-0 border-none flex flex-col overflow-hidden">
                     <div className="h-full flex flex-col bg-slate-50">
-                      <div className="relative h-64 bg-emerald-500 flex items-center justify-center overflow-hidden">
-                        {group?.avatar_url ? (
-                          <img src={group.avatar_url} alt={group.name} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="text-white font-bold text-8xl opacity-20">
-                            {group?.name.substring(0, 2).toUpperCase()}
+                      {/* Fixed Photo Header */}
+                      <div className="relative h-64 bg-emerald-500 flex-shrink-0 overflow-hidden">
+                        <div 
+                          className="absolute inset-0 flex items-center justify-center transition-all bg-emerald-500 cursor-pointer group/header"
+                          onClick={() => groupAvatarInputRef.current?.click()}
+                        >
+                          {group?.avatar_url ? (
+                            <img src={group.avatar_url} alt={group.name} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="text-white font-bold text-8xl opacity-20">
+                              {group?.name.substring(0, 2).toUpperCase()}
+                            </div>
+                          )}
+                          
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/header:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
+                            <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center border border-white/30 text-white shadow-lg">
+                              <Camera size={24} className={isUploadingGroupAvatar ? "animate-spin" : ""} />
+                            </div>
+                            <span className="text-[10px] font-bold text-white uppercase tracking-widest bg-black/20 px-3 py-1 rounded-full backdrop-blur-sm">Change Photo</span>
                           </div>
-                        )}
+                        </div>
 
-                        {isAdmin && (
-                          <div className="absolute top-4 right-4 z-10">
-                            <input
-                              type="file"
-                              ref={groupAvatarInputRef}
-                              onChange={handleGroupAvatarUpload}
-                              className="hidden"
-                              accept="image/*"
-                            />
-                            <Button
-                              size="icon"
-                              variant="secondary"
-                              className="rounded-full shadow-lg bg-white/20 backdrop-blur-md border-white/30 text-white hover:bg-white/40"
-                              onClick={() => groupAvatarInputRef.current?.click()}
-                              disabled={isUploadingGroupAvatar}
-                            >
-                              <Camera size={20} className={isUploadingGroupAvatar ? "animate-spin" : ""} />
-                            </Button>
-                          </div>
-                        )}
+                        <input
+                          type="file"
+                          ref={groupAvatarInputRef}
+                          onChange={handleGroupAvatarUpload}
+                          className="hidden"
+                          accept="image/*"
+                        />
 
-                        <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/60 to-transparent">
-                          <h3 className="text-2xl font-bold text-white">{group?.name}</h3>
-                          <p className="text-white/80 text-sm">Created {group && format(new Date(group.created_at), 'MMM d, yyyy')}</p>
+                        <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 via-black/40 to-transparent pointer-events-none">
+                          <h3 className="text-2xl font-bold text-white leading-tight">{group?.name}</h3>
+                          <p className="text-white/80 text-xs mt-1">Created {group && format(new Date(group.created_at), 'MMM d, yyyy')}</p>
                         </div>
                       </div>
 
-                      <div className="p-6 space-y-6">
-                        {isAdmin && (
-                          <div className="bg-white p-4 rounded-3xl shadow-sm">
-                            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Edit Group Info</h4>
-                            <form onSubmit={handleUpdateGroup} className="space-y-3">
-                              <Input
-                                placeholder="Group Name"
-                                value={editGroupName}
-                                onChange={(e) => setEditGroupName(e.target.value)}
-                                className="bg-slate-50 border-none rounded-xl h-10 text-sm"
-                              />
-                              <Input
-                                placeholder="Description"
-                                value={editGroupDesc}
-                                onChange={(e) => setEditGroupDesc(e.target.value)}
-                                className="bg-slate-50 border-none rounded-xl h-10 text-sm"
-                              />
-                              <Button
-                                type="submit"
-                                disabled={isUpdatingGroup}
-                                className="w-full bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl h-10 text-sm font-bold"
-                              >
-                                {isUpdatingGroup ? 'Updating...' : 'Save Changes'}
-                              </Button>
-                            </form>
-                          </div>
-                        )}
+                      {/* Scrollable Area */}
+                      <div className="flex-1 overflow-y-auto min-h-0">
+                        <div className="p-6 space-y-6 pb-24">
+                          <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100/60">
+                            <div className="flex items-center justify-between mb-4">
+                              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Edit Group Info</h4>
+                                <Plus size={16} className="text-emerald-500 rotate-45" />
+                              </div>
+                              <form onSubmit={handleUpdateGroup} className="space-y-4">
+                                <Input
+                                  placeholder="Group Name"
+                                  value={editGroupName}
+                                  onChange={(e) => setEditGroupName(e.target.value)}
+                                  className="bg-slate-50 border border-slate-200/60 rounded-xl h-11 text-sm focus-visible:ring-emerald-500/20 transition-all font-medium"
+                                />
+                                <Input
+                                  placeholder="Group Description (Optional)"
+                                  value={editGroupDesc}
+                                  onChange={(e) => setEditGroupDesc(e.target.value)}
+                                  className="bg-slate-50 border border-slate-200/60 rounded-xl h-11 text-sm focus-visible:ring-emerald-500/20 transition-all font-medium"
+                                />
+                                <Button 
+                                  type="submit" 
+                                  disabled={isUpdatingGroup}
+                                  className="w-full bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl h-11 text-sm font-bold shadow-lg shadow-emerald-500/10 transition-all active:scale-[0.98]"
+                                >
+                                  {isUpdatingGroup ? "Updating..." : "Save Changes"}
+                                </Button>
+                              </form>
+                            </div>
+                          
 
                         <div className="bg-white p-4 rounded-3xl shadow-sm">
                           <div className="flex items-center justify-between mb-4">
@@ -1023,7 +1158,7 @@ export default function Chat() {
                               placeholder="Search username..."
                               value={searchUser}
                               onChange={(e) => handleSearchUser(e.target.value)}
-                              className="bg-slate-50 border-none rounded-xl h-10 text-sm"
+                              className="bg-slate-50 border border-slate-200/60 rounded-xl h-10 text-sm placeholder:text-slate-400/70 placeholder:font-normal"
                             />
                             <AnimatePresence>
                               {searchResults.map(user => (
@@ -1143,17 +1278,11 @@ export default function Chat() {
                         <Button
                           variant="ghost"
                           onClick={leaveGroup}
-                          className="w-full text-slate-600 hover:text-slate-700 hover:bg-slate-50 rounded-2xl gap-2"
+                          className="w-full text-slate-600 hover:text-slate-700 hover:bg-slate-50 rounded-2xl gap-2 h-12"
                         >
                           <LogOut size={20} /> Exit Group
                         </Button>
-                        <Button
-                          variant="ghost"
-                          onClick={handleLogout}
-                          className="w-full text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-2xl gap-2 mt-4 border-t border-slate-100 pt-4"
-                        >
-                          <LogOut size={20} /> Log Out
-                        </Button>
+                        </div>
                       </div>
                     </div>
                   </SheetContent>
@@ -1217,6 +1346,26 @@ export default function Chat() {
             {filteredMessages.map((msg, index) => {
               const isMe = msg.sender_id === currentUser?.id;
               const showAvatar = index === 0 || filteredMessages[index - 1].sender_id !== msg.sender_id;
+
+              const isSystemMessage = msg.type === 'system' || msg.content?.startsWith('[SYSTEM]:');
+              
+              if (isSystemMessage) {
+                const displayContent = msg.content.replace('[SYSTEM]: ', '').replace('[SYSTEM]:', '');
+                return (
+                  <motion.div
+                    key={msg.id}
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    className="flex justify-center w-full my-4 px-4 sticky top-0 z-10"
+                  >
+                    <div className="bg-slate-200/50 backdrop-blur-sm text-slate-500 text-[10px] sm:text-[11px] px-4 py-1.5 rounded-xl font-bold uppercase tracking-widest shadow-sm border border-slate-300/20 text-center">
+                      {displayContent.includes(currentUser?.username) 
+                        ? displayContent.replace(currentUser.username, 'You') 
+                        : displayContent}
+                    </div>
+                  </motion.div>
+                );
+              }
 
               return (
                 <motion.div
@@ -1337,7 +1486,7 @@ export default function Chat() {
                         isMe ? "text-emerald-100" : "text-slate-400"
                       )}>
                         {starredMessageIds.includes(msg.id) && <Star size={10} fill="currentColor" className="text-yellow-400 mr-1" />}
-                        {format(new Date(msg.created_at), 'HH:mm')}
+                        <span suppressHydrationWarning>{format(new Date(msg.created_at), 'HH:mm')}</span>
                         {isMe && (
                           <span className={cn(
                             "text-[10px] ml-1",
@@ -1357,16 +1506,24 @@ export default function Chat() {
                       </div>
 
                       {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                        <div className={cn(
-                          "absolute -bottom-3 flex gap-1 bg-white shadow-sm border border-slate-100 rounded-full px-1.5 py-0.5 z-20",
-                          isMe ? "right-2" : "left-2"
-                        )}>
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setViewingReactionsMsg(msg);
+                            setActiveReactionTab('All');
+                            fetchReactionProfiles(msg);
+                          }}
+                          className={cn(
+                            "absolute -bottom-3 flex gap-1 bg-white shadow-sm border border-slate-100 rounded-full px-1.5 py-0.5 z-20 hover:bg-slate-50 transition-colors cursor-pointer",
+                            isMe ? "right-2" : "left-2"
+                          )}
+                        >
                           {Object.entries(msg.reactions).map(([emoji, users]) => (
                             <span key={emoji} className="text-[10px] flex items-center gap-0.5">
                               {emoji} <span className="text-[8px] text-slate-400">{(users as string[]).length}</span>
                             </span>
                           ))}
-                        </div>
+                        </button>
                       )}
                     </div>
 
@@ -1506,7 +1663,7 @@ export default function Chat() {
 
       {/* Media Gallery Dialog */}
       <Dialog open={isViewingAllMedia} onOpenChange={setIsViewingAllMedia}>
-        <DialogContent className="sm:max-w-[600px] h-[80vh] rounded-3xl border-none shadow-2xl flex flex-col p-0 overflow-hidden">
+        <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-[600px] h-[80vh] rounded-3xl shadow-none flex flex-col p-8 overflow-hidden mx-auto">
           <DialogHeader className="p-6 border-b border-slate-100">
             <DialogTitle className="text-2xl font-bold">Media, Links and Docs</DialogTitle>
           </DialogHeader>
@@ -1549,7 +1706,7 @@ export default function Chat() {
 
       {/* Forward Dialog */}
       <Dialog open={isForwarding} onOpenChange={setIsForwarding}>
-        <DialogContent className="sm:max-w-[425px] rounded-3xl border-none shadow-2xl">
+        <DialogContent className="shadow-none border-none">
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold">Forward Message</DialogTitle>
             <DialogDescription>
@@ -1648,6 +1805,108 @@ export default function Chat() {
           </div>
         </DialogContent>
       </Dialog>
+      
+      {/* Reaction Summary Sheet */}
+      <Sheet open={!!viewingReactionsMsg} onOpenChange={(open) => !open && setViewingReactionsMsg(null)}>
+        <SheetContent side="bottom" className="h-[70vh] rounded-t-[2.5rem] bg-white border-none p-0 flex flex-col shadow-2xl z-[150]">
+          <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto my-4 shrink-0" />
+          
+          <SheetHeader className="px-6 pb-2 text-left shrink-0">
+            <SheetTitle className="text-xl font-bold text-slate-800">Reactions</SheetTitle>
+            <SheetDescription className="hidden">View who reacted to this message</SheetDescription>
+          </SheetHeader>
+
+          {viewingReactionsMsg?.reactions && (
+            <>
+              {/* Custom Tabs List */}
+              <div className="px-6 border-b border-slate-100 shrink-0">
+                <div className="flex gap-4 overflow-x-auto no-scrollbar py-2">
+                  <button
+                    onClick={() => setActiveReactionTab('All')}
+                    className={cn(
+                      "pb-2 px-1 text-sm font-semibold transition-all relative",
+                      activeReactionTab === 'All' ? "text-emerald-500" : "text-slate-400"
+                    )}
+                  >
+                    All
+                    {activeReactionTab === 'All' && (
+                      <motion.div layoutId="activeTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500 rounded-full" />
+                    )}
+                  </button>
+                  {Object.entries(viewingReactionsMsg.reactions).map(([emoji, users]) => (
+                    <button
+                      key={emoji}
+                      onClick={() => setActiveReactionTab(emoji)}
+                      className={cn(
+                        "pb-2 px-1 text-sm transition-all relative flex items-center gap-1.5",
+                        activeReactionTab === emoji ? "text-emerald-500 font-semibold" : "text-slate-400"
+                      )}
+                    >
+                      <span>{emoji}</span>
+                      <span className="text-xs opacity-60">{(users as string[]).length}</span>
+                      {activeReactionTab === emoji && (
+                        <motion.div layoutId="activeTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500 rounded-full" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Users List */}
+              <ScrollArea className="flex-1 px-4 py-2">
+                {isFetchingReactions ? (
+                  <div className="p-8 space-y-4">
+                    {[1, 2, 3].map(i => (
+                      <div key={i} className="flex gap-3 animate-pulse">
+                        <div className="w-12 h-12 bg-slate-100 rounded-full" />
+                        <div className="space-y-2 flex-1 pt-2">
+                          <div className="h-4 bg-slate-100 rounded-full w-1/3" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {(() => {
+                      if (!viewingReactionsMsg?.reactions) return null;
+                      
+                      const allUserIds = activeReactionTab === 'All' 
+                        ? Array.from(new Set(Object.values(viewingReactionsMsg.reactions).flat() as string[]))
+                        : (viewingReactionsMsg.reactions[activeReactionTab] as string[] || []);
+
+                      return allUserIds.map(userId => {
+                        const profile = reactionProfiles[userId];
+                        // Find which emoji this specific user used
+                        const userEmoji = Object.entries(viewingReactionsMsg.reactions!).find(([_, ids]) => (ids as string[]).includes(userId))?.[0];
+
+                        return (
+                          <div key={`${userId}-${activeReactionTab}`} className="flex items-center gap-4 p-3 hover:bg-slate-50 rounded-2xl transition-colors">
+                            <div className="relative">
+                              <Avatar className="w-12 h-12 border-2 border-white shadow-sm">
+                                <AvatarImage src={profile?.avatar_url} />
+                                <AvatarFallback className="bg-slate-100 text-slate-400 text-xs font-bold uppercase">
+                                  {profile?.username?.substring(0, 2).toUpperCase() || '??'}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div className="absolute -bottom-1 -right-1 bg-white rounded-full p-1 shadow-sm border border-slate-50 text-xs leading-none">
+                                {userEmoji}
+                              </div>
+                            </div>
+                            <div className="flex-1">
+                              <p className="font-bold text-slate-700">{profile?.username || 'Unknown User'}</p>
+                              <p className="text-[10px] text-slate-400">Tapped to react</p>
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                )}
+              </ScrollArea>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
     </motion.div>
   );
 }

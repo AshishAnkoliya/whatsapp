@@ -4,7 +4,7 @@ import * as React from 'react';
 import { useState, useEffect } from 'react';
 import { useRouter as useNavigate } from 'next/navigation';
 
-import { Search, Plus, MoreVertical, Camera, MessageSquare, X, RefreshCw } from 'lucide-react';
+import { Search, Plus, MoreVertical, Camera, MessageSquare, X, RefreshCw, Upload } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
@@ -33,7 +33,10 @@ export default function Home() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupDesc, setNewGroupDesc] = useState('');
+  const [newGroupAvatar, setNewGroupAvatar] = useState<string | null>(null);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -78,6 +81,36 @@ export default function Home() {
     }
   }
 
+  async function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingAvatar(true);
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Math.random()}.${fileExt}`;
+      const filePath = `group-avatars/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('chat-media')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('chat-media')
+        .getPublicUrl(filePath);
+
+      setNewGroupAvatar(publicUrl);
+      toast.success('Group photo uploaded!');
+    } catch (error: any) {
+      toast.error('Failed to upload photo');
+      console.error(error);
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  }
+
   async function handleCreateGroup(e: React.FormEvent) {
     e.preventDefault();
     if (!newGroupName.trim()) return;
@@ -92,6 +125,7 @@ export default function Home() {
         .insert({
           name: newGroupName,
           description: newGroupDesc,
+          avatar_url: newGroupAvatar,
           created_by: user.id
         })
         .select()
@@ -233,7 +267,7 @@ export default function Home() {
                     <div className="flex-1 border-b border-slate-100 pb-3">
                       <div className="flex justify-between items-start mb-1">
                         <h3 className="font-semibold text-slate-900 line-clamp-1">{group.name}</h3>
-                        <span className="text-xs text-slate-400 font-medium">
+                        <span className="text-xs text-slate-400 font-medium" suppressHydrationWarning>
                           {formatDistanceToNow(new Date((group as any).last_message_time || group.created_at), { addSuffix: false })}
                         </span>
                       </div>
@@ -267,34 +301,63 @@ export default function Home() {
         >
           <Plus size={28} />
         </DialogTrigger>
-        <DialogContent className="sm:max-w-[425px] rounded-3xl border-none shadow-2xl">
+        <DialogContent className="border-none shadow-none">
           <DialogHeader>
-            <DialogTitle className="text-2xl font-bold">New Group</DialogTitle>
-            <DialogDescription>
-              Create a new space for your team or friends.
-            </DialogDescription>
+            <DialogTitle className="text-2xl font-bold text-center">New Group</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleCreateGroup} className="space-y-4 py-4">
+          <form onSubmit={handleCreateGroup} className="space-y-6">
+            <div className="flex flex-col items-center gap-4 py-2">
+              <div 
+                onClick={() => fileInputRef.current?.click()}
+                className="w-24 h-24 bg-slate-50 border-2 border-dashed border-slate-200 rounded-[2.5rem] flex flex-col items-center justify-center cursor-pointer hover:bg-slate-100 hover:border-emerald-300 transition-all relative overflow-hidden group"
+              >
+                {newGroupAvatar ? (
+                  <img src={newGroupAvatar} className="w-full h-full object-cover" />
+                ) : (
+                  <>
+                    <Camera className="text-slate-400 mb-1" size={24} />
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Add Photo</span>
+                  </>
+                )}
+                {isUploadingAvatar && (
+                  <div className="absolute inset-0 bg-white/80 flex items-center justify-center">
+                    <RefreshCw className="animate-spin text-emerald-500" size={20} />
+                  </div>
+                )}
+                <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                  <Upload className="text-white" size={20} />
+                </div>
+              </div>
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                className="hidden" 
+                accept="image/*"
+                onChange={handleAvatarUpload}
+              />
+            </div>
             <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Group Name</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] ml-1">Group Name</label>
               <Input
                 placeholder="e.g. Design Team"
                 value={newGroupName}
                 onChange={(e) => setNewGroupName(e.target.value)}
                 required
-                className="bg-slate-50 border-none rounded-xl h-12 focus-visible:ring-emerald-500/20"
+                className="bg-slate-50 border border-slate-200/60 rounded-xl h-12 focus-visible:ring-emerald-500/20 placeholder:text-slate-400/70 placeholder:font-normal"
               />
             </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Description (Optional)</label>
-              <Input
-                placeholder="What's this group about?"
-                value={newGroupDesc}
-                onChange={(e) => setNewGroupDesc(e.target.value)}
-                className="bg-slate-50 border-none rounded-xl h-12 focus-visible:ring-emerald-500/20"
-              />
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] ml-1">Description (Optional)</label>
+                <Input
+                  placeholder="What's this group about?"
+                  value={newGroupDesc}
+                  onChange={(e) => setNewGroupDesc(e.target.value)}
+                  className="bg-slate-50 border border-slate-200/60 rounded-xl h-12 focus-visible:ring-emerald-500/20 placeholder:text-slate-400/70 placeholder:font-normal"
+                />
+              </div>
             </div>
-            <DialogFooter className="pt-4">
+            <DialogFooter>
               <Button 
                 type="submit" 
                 className="w-full h-12 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-100 transition-all active:scale-[0.98]"

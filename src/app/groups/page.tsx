@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useState } from 'react';
-import { Users, Search, Plus, MessageSquare } from 'lucide-react';
+import { Users, Search, Plus, MessageSquare, Camera, Upload, RefreshCw } from 'lucide-react';
 import { motion } from 'motion/react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
@@ -16,7 +16,40 @@ export default function Groups() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupDesc, setNewGroupDesc] = useState('');
+  const [newGroupAvatar, setNewGroupAvatar] = useState<string | null>(null);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  async function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingAvatar(true);
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Math.random()}.${fileExt}`;
+      const filePath = `group-avatars/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('chat-media')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('chat-media')
+        .getPublicUrl(filePath);
+
+      setNewGroupAvatar(publicUrl);
+      toast.success('Community photo uploaded!');
+    } catch (error: any) {
+      toast.error('Failed to upload photo');
+      console.error(error);
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  }
 
   async function handleCreateGroup(e: React.FormEvent) {
     e.preventDefault();
@@ -32,6 +65,7 @@ export default function Groups() {
         .insert({
           name: newGroupName,
           description: newGroupDesc,
+          avatar_url: newGroupAvatar,
           created_by: user.id
         });
 
@@ -40,6 +74,7 @@ export default function Groups() {
       toast.success('Community created successfully!');
       setNewGroupName('');
       setNewGroupDesc('');
+      setNewGroupAvatar(null);
       setIsCreateDialogOpen(false);
     } catch (error: any) {
       toast.error(error.message || 'Failed to create community');
@@ -64,46 +99,70 @@ export default function Groups() {
                 </motion.button>
               }
             />
-            <DialogContent className="max-w-[90vw] sm:max-w-md rounded-[2.5rem] border border-white/50 bg-white/90 backdrop-blur-2xl shadow-[0_32px_64px_-16px_rgba(0,0,0,0.2)] p-0 overflow-hidden ring-0">
-              <DialogHeader className="pt-8 px-8 pb-4">
-                <DialogTitle className="text-3xl font-black text-slate-900 tracking-tight">New Community</DialogTitle>
-                <DialogDescription className="text-slate-500 font-medium">
-                  Bring people together with a common interest.
-                </DialogDescription>
+            <DialogContent className="border-none shadow-none">
+              <DialogHeader>
+                <DialogTitle className="text-2xl font-bold text-center">New Community</DialogTitle>
               </DialogHeader>
-              <form onSubmit={handleCreateGroup} className="space-y-6 px-8 pb-10 pt-2">
+              <form onSubmit={handleCreateGroup} className="space-y-6">
+                <div className="flex flex-col items-center gap-4 py-2">
+                  <div 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-24 h-24 bg-slate-50 border-2 border-dashed border-slate-200 rounded-[2.5rem] flex flex-col items-center justify-center cursor-pointer hover:bg-slate-100 hover:border-emerald-300 transition-all relative overflow-hidden group"
+                  >
+                    {newGroupAvatar ? (
+                      <img src={newGroupAvatar} className="w-full h-full object-cover" />
+                    ) : (
+                      <>
+                        <Camera className="text-slate-400 mb-1" size={24} />
+                        <span className="text-[10px] font-bold text-slate-400 uppercase">Add Photo</span>
+                      </>
+                    )}
+                    {isUploadingAvatar && (
+                      <div className="absolute inset-0 bg-white/80 flex items-center justify-center">
+                        <RefreshCw className="animate-spin text-emerald-500" size={20} />
+                      </div>
+                    )}
+                    <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <Upload className="text-white" size={20} />
+                    </div>
+                  </div>
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    className="hidden" 
+                    accept="image/*"
+                    onChange={handleAvatarUpload}
+                  />
+                </div>
                 <div className="space-y-2">
-                  <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.2em] ml-1">Community Name</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] ml-1">Community Name</label>
                   <Input 
                     placeholder="e.g. Weekend Hikers" 
                     value={newGroupName}
                     onChange={(e) => setNewGroupName(e.target.value)}
-                    className="bg-slate-50/50 border-slate-200 rounded-2xl h-14 px-4 shadow-sm transition-all focus-visible:ring-emerald-500/10 focus-visible:border-emerald-500 focus-visible:bg-white"
+                    className="bg-slate-50 border border-slate-200/60 rounded-xl h-12 focus-visible:ring-emerald-500/20 placeholder:text-slate-400/70 placeholder:font-normal"
                   />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.2em] ml-1">Description (Optional)</label>
-                  <Input 
-                    placeholder="What's this community about?" 
-                    value={newGroupDesc}
-                    onChange={(e) => setNewGroupDesc(e.target.value)}
-                    className="bg-slate-50/50 border-slate-200 rounded-2xl h-14 px-4 shadow-sm transition-all focus-visible:ring-emerald-500/10 focus-visible:border-emerald-500 focus-visible:bg-white"
-                  />
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] ml-1">Description (Optional)</label>
+                    <Input 
+                      placeholder="What's this community about?" 
+                      value={newGroupDesc}
+                      onChange={(e) => setNewGroupDesc(e.target.value)}
+                      className="bg-slate-50 border border-slate-200/60 rounded-xl h-12 focus-visible:ring-emerald-500/20 placeholder:text-slate-400/70 placeholder:font-normal"
+                    />
+                  </div>
                 </div>
-                <div className="pt-2">
+                <DialogFooter>
                   <Button 
                     type="submit" 
-                    className="w-full h-14 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold shadow-xl shadow-emerald-100 transition-all active:scale-[0.98] text-base"
+                    className="w-full h-12 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-100 transition-all active:scale-[0.98]"
                     disabled={isCreating}
                   >
-                    {isCreating ? (
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        <span>Creating...</span>
-                      </div>
-                    ) : 'Create Community'}
+                    {isCreating ? 'Creating...' : 'Create Community'}
                   </Button>
-                </div>
+                </DialogFooter>
               </form>
             </DialogContent>
           </Dialog>

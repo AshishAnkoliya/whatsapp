@@ -24,6 +24,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
+  userScalable: false,
 };
 
 export default function RootLayout({
@@ -35,9 +36,12 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-emerald-100 flex flex-col items-center">
-        <main className="h-screen w-full max-w-md mx-auto bg-white shadow-xl relative flex flex-col overflow-hidden">
+      <body cz-shortcut-listen="true"
+        data-new-gr-c-s-check-loaded="14.1283.0"
+        data-gr-ext-installed="" className="h-full bg-slate-50 text-slate-900 font-sans selection:bg-emerald-100 flex flex-col items-center overflow-hidden overscroll-none">
+        <main className="fixed inset-0 w-full max-w-md mx-auto bg-white shadow-xl flex flex-col overflow-hidden">
           <ClientLayout>{children}</ClientLayout>
           <Toaster position="top-center" richColors />
         </main>

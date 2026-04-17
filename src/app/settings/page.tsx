@@ -228,34 +228,34 @@ export default function Settings() {
                 <ChevronRight size={24} />
               </div>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[425px] rounded-3xl border-none shadow-2xl">
+            <DialogContent className="border-none shadow-none">
               <DialogHeader>
                 <DialogTitle className="text-2xl font-bold">Edit Profile</DialogTitle>
                 <DialogDescription>
                   Update your public information.
                 </DialogDescription>
               </DialogHeader>
-              <form onSubmit={handleUpdateProfile} className="space-y-4 py-4">
+              <form onSubmit={handleUpdateProfile} className="space-y-6">
                 <div className="space-y-2">
-                  <Label htmlFor="name" className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Username</Label>
+                  <Label htmlFor="name" className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] ml-1">Username</Label>
                   <Input
                     id="name"
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
                     required
-                    className="bg-slate-50 border-none rounded-xl h-12 focus-visible:ring-emerald-500/20"
+                    className="bg-slate-50 border border-slate-200/60 rounded-xl h-12 focus-visible:ring-emerald-500/20 placeholder:text-slate-400/70 placeholder:font-normal"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="status" className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Status</Label>
+                  <Label htmlFor="status" className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] ml-1">Status</Label>
                   <Input
                     id="status"
                     value={editStatus}
                     onChange={(e) => setEditStatus(e.target.value)}
-                    className="bg-slate-50 border-none rounded-xl h-12 focus-visible:ring-emerald-500/20"
+                    className="bg-slate-50 border border-slate-200/60 rounded-xl h-12 focus-visible:ring-emerald-500/20 placeholder:text-slate-400/70 placeholder:font-normal"
                   />
                 </div>
-                <DialogFooter className="pt-4">
+                <DialogFooter>
                   <Button 
                     type="submit" 
                     className="w-full h-12 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-100 transition-all active:scale-[0.98]"
