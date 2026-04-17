@@ -548,55 +548,30 @@ export default function Chat() {
   async function triggerPushNotification(messageTitle: string, messageBody: string) {
     if (!groupId || !currentUser || !members.length) return;
 
-    console.log('--- Triggering Push Notification ---');
-    console.log('Title:', messageTitle);
-    console.log('Members count:', members.length);
+  async function triggerPushNotification(messageTitle: string, messageBody: string) {
+    if (!groupId || !currentUser) return;
+
+    console.log('--- Triggering Server-Side Push Notification ---');
 
     try {
-      const otherMembers = members.filter(m => m.user_id !== currentUser.id);
-      console.log('Target members (excluding me):', otherMembers.length);
-      
-      if (otherMembers.length === 0) return;
+      const response = await fetch('/api/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          groupId,
+          senderId: currentUser.id,
+          title: messageTitle,
+          body: messageBody,
+          url: window.location.href
+        })
+      });
 
-      const { data: subscriptions, error } = await supabase
-        .from('push_subscriptions')
-        .select('*')
-        .in('user_id', otherMembers.map(m => m.user_id));
-
-      if (error) {
-        console.error('Error fetching subscriptions:', error);
-        return;
-      }
-      
-      console.log('Found subscriptions:', subscriptions?.length || 0);
-
-      if (!subscriptions || subscriptions.length === 0) return;
-
-      for (const sub of subscriptions) {
-        try {
-          console.log('Sending to endpoint:', sub.endpoint.substring(0, 50) + '...');
-          const response = await fetch('/api/push', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              subscription: {
-                endpoint: sub.endpoint,
-                keys: { p256dh: sub.p256dh, auth: sub.auth }
-              },
-              title: messageTitle,
-              body: messageBody,
-              url: window.location.href
-            })
-          });
-          const result = await response.json();
-          console.log('Push API Result:', result);
-        } catch (pushError) {
-          console.error('Individual push fetch failed:', pushError);
-        }
-      }
+      const result = await response.json();
+      console.log('Server-Side Push Result:', result);
     } catch (err) {
       console.error('Trigger push top-level error:', err);
     }
+  }
   }
 
   async function fetchReactionProfiles(msg: Message) {
