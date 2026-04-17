@@ -35,34 +35,56 @@ export async function POST(request: Request) {
     console.log(`Processing push for Group: ${groupId}, Sender: ${senderId}`);
 
     // 1. Fetch group members using service_role client (bypasses RLS)
+    console.log('--- DB QUERY 1: Fetching group members... ---');
     const { data: members, error: membersError } = await supabaseServer
       .from('group_members')
       .select('user_id')
-      .eq('group_id', groupId)
-      .neq('user_id', senderId);
+      .eq('group_id', groupId);
 
-    if (membersError) throw membersError;
-    if (!members || members.length === 0) {
-      console.log('No other members to notify');
+    if (membersError) {
+      console.error('❌ Member fetch error:', membersError);
+      throw membersError;
+    }
+    
+    console.log('All group members found:', members?.map(m => m.user_id));
+
+    // Filter out sender
+    const otherMemberIds = members
+      ?.filter(m => m.user_id !== senderId)
+      .map(m => m.user_id) || [];
+
+    console.log(`Target member IDs (excluding sender ${senderId}):`, otherMemberIds);
+
+    if (otherMemberIds.length === 0) {
+      console.log('No other members found to notify.');
       return NextResponse.json({ success: true, message: 'No other members' });
     }
 
-    const otherUserIds = members.map(m => m.user_id);
-    console.log(`Found ${otherUserIds.length} other members to notify`);
-
     // 2. Fetch all subscriptions for these users
+    console.log('--- DB QUERY 2: Fetching subscriptions for target users... ---');
     const { data: subscriptions, error: subsError } = await supabaseServer
       .from('push_subscriptions')
       .select('*')
-      .in('user_id', otherUserIds);
+      .in('user_id', otherMemberIds);
 
-    if (subsError) throw subsError;
+    if (subsError) {
+      console.error('❌ Subscription fetch error:', subsError);
+      throw subsError;
+    }
+
+    console.log(`Found ${subscriptions?.length || 0} subscriptions in database.`);
+    if (subscriptions) {
+      subscriptions.forEach((s, i) => {
+        console.log(`Sub ${i+1}: user=${s.user_id}, endpoint=${s.endpoint.substring(0, 40)}...`);
+      });
+    }
+
     if (!subscriptions || subscriptions.length === 0) {
-      console.log('No push subscriptions found for other members');
+      console.log('No valid push subscriptions found for target members.');
       return NextResponse.json({ success: true, message: 'No subscriptions' });
     }
 
-    console.log(`Sending to ${subscriptions.length} subscription endpoints...`);
+    console.log(`Sending push to ${subscriptions.length} endpoints...`);
 
     // 3. Send notifications to each subscription
     const pushPayload = JSON.stringify({
