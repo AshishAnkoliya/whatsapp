@@ -13,11 +13,14 @@ if (vapidPublicKey && vapidPrivateKey) {
 }
 
 export async function POST(request: Request) {
+  console.log('--- Incoming Push Request ---');
+  console.log('VAPID Public Key Loaded:', !!vapidPublicKey);
+  console.log('VAPID Private Key Loaded:', !!vapidPrivateKey);
+
   try {
     const payload = await request.json();
     const { subscription, title, body, url } = payload;
 
-    console.log('--- Incoming Push Request ---');
     console.log('Title:', title);
     console.log('Body:', body);
     console.log('Endpoint:', subscription?.endpoint?.substring(0, 50) + '...');
@@ -27,6 +30,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
+    if (!vapidPublicKey || !vapidPrivateKey) {
+      console.error('VAPID keys missing in server environment');
+      return NextResponse.json({ error: 'Server configuration error: VAPID keys missing' }, { status: 500 });
+    }
+
     const pushPayload = JSON.stringify({
       title,
       body,
@@ -34,11 +42,16 @@ export async function POST(request: Request) {
     });
 
     await webpush.sendNotification(subscription, pushPayload);
-    console.log('✅ Push sent successfully');
+    console.log('✅ Push sent successfully to:', subscription.endpoint.substring(0, 30));
 
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('❌ Push notification error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    // Log more details if available
+    if (error.statusCode) {
+      console.error('Error Status Code:', error.statusCode);
+      console.error('Error Body:', error.body);
+    }
+    return NextResponse.json({ error: error.message, details: error.body || null }, { status: 500 });
   }
 }

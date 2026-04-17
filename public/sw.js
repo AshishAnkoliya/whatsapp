@@ -1,9 +1,11 @@
 /* eslint-disable no-restricted-globals */
 
 self.addEventListener('push', function(event) {
+  console.log('[Service Worker] Push Received.');
   if (event.data) {
     try {
       const data = event.data.json();
+      console.log('[Service Worker] Push Data:', data);
       const options = {
         body: data.body,
         icon: '/icon-192.png',

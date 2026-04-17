@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, FormEvent, ChangeEvent } from 'react';
-import { User, Bell, Lock, Shield, HelpCircle, LogOut, ChevronRight, Moon, Globe, Camera } from 'lucide-react';
+import { User, Bell, Lock, Shield, ShieldCheck, HelpCircle, LogOut, ChevronRight, Moon, Globe, Camera } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -137,7 +137,44 @@ export default function Settings() {
     window.location.href = '/'; // Redirect to login
   }
 
+  const handleSendTestNotification = async () => {
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+
+      if (!subscription) {
+        toast.error('No push subscription found. Please enable notifications first.');
+        return;
+      }
+
+      toast.loading('Sending test notification...', { id: 'test-push' });
+
+      const res = await fetch('/api/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subscription,
+          title: 'WhatsApp Pro Test',
+          body: 'This is a test notification to verify your setup! ✅',
+          url: '/settings'
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send');
+
+      toast.success('Test notification sent!', { id: 'test-push' });
+    } catch (error: any) {
+      console.error('Test notification error:', error);
+      toast.error(`Error: ${error.message}`, { id: 'test-push' });
+    }
+  };
+
   const handleItemClick = (label: string) => {
+    if (label === 'Push Verification') {
+      handleSendTestNotification();
+      return;
+    }
     toast.info(`${label} settings coming soon!`);
   };
 
@@ -145,7 +182,8 @@ export default function Settings() {
     { icon: User, label: 'Account', sub: 'Privacy, security, change number', color: 'bg-blue-100 text-blue-600' },
     { icon: Lock, label: 'Privacy', sub: 'Last seen, profile photo, groups', color: 'bg-emerald-100 text-emerald-600' },
     { icon: Bell, label: 'Notifications', sub: 'Message, group & call tones', color: 'bg-orange-100 text-orange-600' },
-    { icon: Shield, label: 'Security', sub: 'Two-step verification, encryption', color: 'bg-indigo-100 text-indigo-600' },
+    { icon: Shield, label: 'Push Verification', sub: 'Test push notification delivery', color: 'bg-emerald-100 text-emerald-600' },
+    { icon: ShieldCheck, label: 'Security', sub: 'Two-step verification, encryption', color: 'bg-indigo-100 text-indigo-600' },
     { icon: Globe, label: 'App Language', sub: 'English (device language)', color: 'bg-purple-100 text-purple-600' },
     { icon: HelpCircle, label: 'Help', sub: 'Help center, contact us, privacy policy', color: 'bg-slate-100 text-slate-600' },
   ];
