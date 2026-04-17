@@ -21,10 +21,12 @@ export default function Settings() {
   const [editStatus, setEditStatus] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isSubscribed, setIsSubscribed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchProfile();
+    fetchSubscriptionStatus();
   }, []);
 
   async function fetchProfile() {
@@ -40,6 +42,17 @@ export default function Settings() {
       setProfile(data);
       setEditName(data?.username || '');
       setEditStatus(data?.status || '');
+    }
+  }
+
+  async function fetchSubscriptionStatus() {
+    const user = await getCurrentUser();
+    if (user) {
+      const { data } = await supabase
+        .from('push_subscriptions')
+        .select('*')
+        .eq('user_id', user.id);
+      setIsSubscribed(!!data && data.length > 0);
     }
   }
 
@@ -164,6 +177,7 @@ export default function Settings() {
       if (!res.ok) throw new Error(data.error || 'Failed to send');
 
       toast.success('Test notification sent!', { id: 'test-push' });
+      fetchSubscriptionStatus(); // Refresh status
     } catch (error: any) {
       console.error('Test notification error:', error);
       toast.error(`Error: ${error.message}`, { id: 'test-push' });
@@ -182,7 +196,12 @@ export default function Settings() {
     { icon: User, label: 'Account', sub: 'Privacy, security, change number', color: 'bg-blue-100 text-blue-600' },
     { icon: Lock, label: 'Privacy', sub: 'Last seen, profile photo, groups', color: 'bg-emerald-100 text-emerald-600' },
     { icon: Bell, label: 'Notifications', sub: 'Message, group & call tones', color: 'bg-orange-100 text-orange-600' },
-    { icon: Shield, label: 'Push Verification', sub: 'Test push notification delivery', color: 'bg-emerald-100 text-emerald-600' },
+    { 
+      icon: Shield, 
+      label: 'Push Verification', 
+      sub: isSubscribed ? '✅ Subscribed - Click to Test' : '❌ Not Subscribed - Enable in Chat', 
+      color: isSubscribed ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600' 
+    },
     { icon: ShieldCheck, label: 'Security', sub: 'Two-step verification, encryption', color: 'bg-indigo-100 text-indigo-600' },
     { icon: Globe, label: 'App Language', sub: 'English (device language)', color: 'bg-purple-100 text-purple-600' },
     { icon: HelpCircle, label: 'Help', sub: 'Help center, contact us, privacy policy', color: 'bg-slate-100 text-slate-600' },

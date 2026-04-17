@@ -111,17 +111,16 @@ export default function Chat() {
         applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
       });
 
-      // Standard way to extract keys for maximum browser compatibility
-      const key = subscription.getKey('p256dh');
-      const token = subscription.getKey('auth');
+      // Use toJSON() for maximum compatibility and simplicity
+      const subJson = subscription.toJSON();
+      const p256dh = subJson.keys?.p256dh;
+      const auth = subJson.keys?.auth;
 
-      if (!key || !token) {
+      if (!p256dh || !auth) {
         throw new Error('Could not extract push subscription keys');
       }
 
-      const p256dh = btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(key))));
-      const auth = btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(token))));
-
+      console.log('Sending subscription to Supabase...');
       const { error } = await supabase
         .from('push_subscriptions')
         .upsert({
