@@ -34,6 +34,12 @@ export type Group = {
   avatar_url: string;
   created_at: string;
   created_by: string;
+  // UI helper fields
+  last_message?: string;
+  last_message_time?: string;
+  last_sender_name?: string;
+  last_message_type?: string;
+  unread_count?: number;
 };
 
 export type Message = {

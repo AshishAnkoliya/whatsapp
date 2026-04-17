@@ -41,6 +41,57 @@ export default function Home() {
 
   useEffect(() => {
     fetchGroups();
+
+    // Set up Real-time subscription for messages
+    const channel = supabase
+      .channel('chat-list-updates')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'messages' },
+        async (payload) => {
+          const user = await getCurrentUser();
+          if (!user) return;
+
+          if (payload.eventType === 'INSERT') {
+            const newMessage = payload.new;
+            
+            // Fetch sender profile for the new message
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('username')
+              .eq('id', newMessage.sender_id)
+              .single();
+
+            setGroups(prev => {
+              const groupIndex = prev.findIndex(g => g.id === newMessage.group_id);
+              if (groupIndex === -1) return prev; 
+
+              const updatedGroup = {
+                ...prev[groupIndex],
+                last_message: newMessage.content,
+                last_message_time: newMessage.created_at,
+                last_sender_name: newMessage.sender_id === user.id ? 'You' : (profile?.username || 'Unknown'),
+                last_message_type: newMessage.type,
+                unread_count: newMessage.sender_id !== user.id 
+                  ? (prev[groupIndex].unread_count || 0) + 1 
+                  : prev[groupIndex].unread_count
+              };
+
+              const otherGroups = prev.filter(g => g.id !== newMessage.group_id);
+              return [updatedGroup, ...otherGroups]; // Move to top
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            // Re-calculate unread count for the affected group if readStatus changed
+            const updatedMsg = payload.new;
+            fetchUnreadCountForGroup(updatedMsg.group_id, user.id);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   async function fetchGroups() {
@@ -56,28 +107,60 @@ export default function Home() {
 
       if (groupsError) throw groupsError;
 
-      // Fetch last message for each group
-      const groupsWithLastMessage = await Promise.all((groupsData || []).map(async (group) => {
+      // Fetch last message and unread count for each group
+      const groupsWithData = await Promise.all((groupsData || []).map(async (group) => {
         const { data: lastMsgData } = await supabase
           .from('messages')
-          .select('content, created_at')
+          .select('content, created_at, type, sender_id, profiles(username)')
           .eq('group_id', group.id)
+          .or('is_deleted.eq.false,is_deleted.is.null') // Filter out deleted messages
           .order('created_at', { ascending: false })
           .limit(1)
           .single();
 
+        const senderName = (lastMsgData as any)?.profiles?.username || 'Unknown';
+
+        // Calculate unread count (messages where read_by Doesn't include user.id)
+        const { count: unreadCount } = await supabase
+          .from('messages')
+          .select('*', { count: 'exact', head: true })
+          .eq('group_id', group.id)
+          .or('is_deleted.eq.false,is_deleted.is.null') // Filter out deleted messages
+          .not('read_by', 'cs', `{"${user.id}"}`);
+
+        console.log(`Group ${group.name} last message:`, lastMsgData);
+
         return {
           ...group,
           last_message: lastMsgData?.content || null,
-          last_message_time: lastMsgData?.created_at || group.created_at
+          last_message_time: lastMsgData?.created_at || group.created_at,
+          last_sender_name: lastMsgData?.sender_id === user.id ? 'You' : senderName,
+          last_message_type: lastMsgData?.type || 'text',
+          unread_count: unreadCount || 0
         };
       }));
 
-      setGroups(groupsWithLastMessage);
+      setGroups(groupsWithData);
     } catch (error) {
       console.error('Error fetching groups:', error);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function fetchUnreadCountForGroup(groupId: string, userId: string) {
+    try {
+      const { count } = await supabase
+        .from('messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('group_id', groupId)
+        .not('read_by', 'cs', `{"${userId}"}`);
+
+      setGroups(prev => prev.map(g => 
+        g.id === groupId ? { ...g, unread_count: count || 0 } : g
+      ));
+    } catch (err) {
+      console.error('Error fetching unread count:', err);
     }
   }
 
@@ -264,16 +347,39 @@ export default function Home() {
                         {group.name.substring(0, 2).toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
-                    <div className="flex-1 border-b border-slate-100 pb-3">
+                    <div className="flex-1 border-b border-slate-100 pb-3 relative">
                       <div className="flex justify-between items-start mb-1">
                         <h3 className="font-semibold text-slate-900 line-clamp-1">{group.name}</h3>
                         <span className="text-xs text-slate-400 font-medium" suppressHydrationWarning>
                           {formatDistanceToNow(new Date((group as any).last_message_time || group.created_at), { addSuffix: false })}
                         </span>
                       </div>
-                      <p className="text-sm text-slate-500 line-clamp-1">
-                        {(group as any).last_message || group.description || 'Tap to start chatting...'}
-                      </p>
+                      <div className="flex justify-between items-center">
+                        <p className="text-sm text-slate-500 line-clamp-1 flex-1 pr-8">
+                          {group.last_message ? (
+                            <>
+                              {group.last_sender_name && group.last_message_type !== 'system' && (
+                                <span className="font-semibold text-slate-700">{group.last_sender_name}: </span>
+                              )}
+                              <span className="text-slate-600">
+                                {group.last_message_type === 'image' ? '📷 Photo' : 
+                                 group.last_message_type === 'video' ? '🎥 Video' :
+                                 group.last_message_type === 'document' ? '📄 Document' : 
+                                 group.last_message}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-slate-400 italic font-normal">
+                              {group.description || 'Tap to start chatting...'}
+                            </span>
+                          )}
+                        </p>
+                        {Number(group.unread_count) > 0 ? (
+                          <div className="absolute right-0 bottom-4 bg-emerald-500 text-white text-[10px] font-bold min-w-[20px] h-[20px] rounded-full flex items-center justify-center px-1.5 shadow-sm animate-in zoom-in">
+                            {(group.unread_count || 0) > 99 ? '99+' : group.unread_count}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   </motion.div>
                 </div>

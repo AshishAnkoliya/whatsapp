@@ -111,15 +111,24 @@ export default function Chat() {
         applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
       });
 
-      const { endpoint, keys } = JSON.parse(JSON.stringify(subscription));
+      // Standard way to extract keys for maximum browser compatibility
+      const key = subscription.getKey('p256dh');
+      const token = subscription.getKey('auth');
+
+      if (!key || !token) {
+        throw new Error('Could not extract push subscription keys');
+      }
+
+      const p256dh = btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(key))));
+      const auth = btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(token))));
 
       const { error } = await supabase
         .from('push_subscriptions')
         .upsert({
           user_id: currentUser.id,
-          endpoint,
-          p256dh: keys.p256dh,
-          auth: keys.auth
+          endpoint: subscription.endpoint,
+          p256dh,
+          auth
         }, { onConflict: 'user_id, endpoint' });
 
       if (error) throw error;
@@ -145,6 +154,7 @@ export default function Chat() {
         filter: `group_id=eq.${groupId}`
       }, async (payload) => {
         const newMessage = payload.new as Message;
+        if (newMessage.is_deleted) return; 
 
         // Fetch sender info for the new message
         const { data: profile } = await supabase
@@ -163,6 +173,18 @@ export default function Chat() {
           if (prev.some(m => m.id === messageWithSender.id)) return prev;
           return [...prev, messageWithSender];
         });
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'messages',
+        filter: `group_id=eq.${groupId}`
+      }, (payload) => {
+        const updatedMessage = payload.new as Message;
+        if (updatedMessage.is_deleted) {
+          // Remove from local state if soft deleted
+          setMessages(prev => prev.filter(m => m.id !== updatedMessage.id));
+        }
       })
       .on('broadcast', { event: 'new_message' }, ({ payload }) => {
         const { message } = payload;
@@ -311,6 +333,7 @@ export default function Chat() {
         .from('messages')
         .select('*, profiles(username, avatar_url)')
         .eq('group_id', groupId)
+        .or('is_deleted.eq.false,is_deleted.is.null') // Filter out deleted messages
         .order('created_at', { ascending: true });
 
       if (messageData) {
@@ -526,8 +549,14 @@ export default function Chat() {
   async function triggerPushNotification(messageTitle: string, messageBody: string) {
     if (!groupId || !currentUser || !members.length) return;
 
+    console.log('--- Triggering Push Notification ---');
+    console.log('Title:', messageTitle);
+    console.log('Members count:', members.length);
+
     try {
       const otherMembers = members.filter(m => m.user_id !== currentUser.id);
+      console.log('Target members (excluding me):', otherMembers.length);
+      
       if (otherMembers.length === 0) return;
 
       const { data: subscriptions, error } = await supabase
@@ -535,11 +564,19 @@ export default function Chat() {
         .select('*')
         .in('user_id', otherMembers.map(m => m.user_id));
 
-      if (error || !subscriptions || subscriptions.length === 0) return;
+      if (error) {
+        console.error('Error fetching subscriptions:', error);
+        return;
+      }
+      
+      console.log('Found subscriptions:', subscriptions?.length || 0);
+
+      if (!subscriptions || subscriptions.length === 0) return;
 
       for (const sub of subscriptions) {
         try {
-          await fetch('/api/push', {
+          console.log('Sending to endpoint:', sub.endpoint.substring(0, 50) + '...');
+          const response = await fetch('/api/push', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -552,12 +589,14 @@ export default function Chat() {
               url: window.location.href
             })
           });
+          const result = await response.json();
+          console.log('Push API Result:', result);
         } catch (pushError) {
-          console.error('Individual push failed:', pushError);
+          console.error('Individual push fetch failed:', pushError);
         }
       }
     } catch (err) {
-      console.error('Trigger push error:', err);
+      console.error('Trigger push top-level error:', err);
     }
   }
 
@@ -1104,7 +1143,7 @@ export default function Chat() {
       className="flex flex-col h-[100dvh] bg-[#efe7dd] overflow-hidden"
     >
       {/* Chat Header */}
-      <header className={cn("px-4 py-3 flex items-center gap-3 backdrop-blur-md z-40 shadow-sm transition-colors duration-300 flex-shrink-0", selectedMessageId ? "bg-emerald-600 border-none" : "bg-white/90 border-b border-slate-200")}>
+      <header className={cn("px-4 py-3 flex items-center gap-3 backdrop-blur-md z-50 shadow-sm transition-colors duration-300 flex-shrink-0 sticky top-0", selectedMessageId ? "bg-emerald-600 border-none" : "bg-white border-b border-slate-100")}>
         {selectedMessageId ? (
           <div className="flex w-full items-center text-white">
             <button onClick={() => setSelectedMessageId(null)} className="p-2 hover:bg-emerald-700 rounded-full transition-colors">
@@ -1459,7 +1498,7 @@ export default function Chat() {
       </header>
 
       {/* Messages Area */}
-      <div className="flex-1 px-4 py-6 overflow-y-auto touch-pan-y relative message-area-scroll">
+      <div className="flex-1 px-4 pt-4 pb-6 overflow-y-auto touch-pan-y relative message-area-scroll">
         {/* Upload Progress Overlays */}
         {Object.entries(uploadProgress).length > 0 && (
           <div className="fixed bottom-24 right-6 left-6 z-30 pointer-events-none">
@@ -1501,11 +1540,11 @@ export default function Chat() {
                 return (
                   <motion.div
                     key={msg.id}
-                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    className="flex justify-center w-full my-4 px-4 sticky top-0 z-10"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="flex justify-center w-full my-6 px-4"
                   >
-                    <div className="bg-slate-200/50 backdrop-blur-sm text-slate-500 text-[10px] sm:text-[11px] px-4 py-1.5 rounded-xl font-bold uppercase tracking-widest shadow-sm border border-slate-300/20 text-center">
+                    <div className="bg-slate-100/80 backdrop-blur-sm text-slate-500 text-[10px] sm:text-[11px] px-4 py-1.5 rounded-full font-bold uppercase tracking-widest shadow-[0_1px_2px_rgba(0,0,0,0.05)] border border-slate-200/50 text-center">
                       {displayContent.includes(currentUser?.username) 
                         ? displayContent.replace(currentUser.username, 'You') 
                         : displayContent}
