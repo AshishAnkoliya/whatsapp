@@ -546,9 +546,6 @@ export default function Chat() {
   }
 
   async function triggerPushNotification(messageTitle: string, messageBody: string) {
-    if (!groupId || !currentUser || !members.length) return;
-
-  async function triggerPushNotification(messageTitle: string, messageBody: string) {
     if (!groupId || !currentUser) return;
 
     console.log('--- Triggering Server-Side Push Notification ---');
@@ -571,7 +568,6 @@ export default function Chat() {
     } catch (err) {
       console.error('Trigger push top-level error:', err);
     }
-  }
   }
 
   async function fetchReactionProfiles(msg: Message) {
