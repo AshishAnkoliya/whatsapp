@@ -58,6 +58,7 @@ export default function Chat() {
 
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
+
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [isRecording, setIsRecording] = useState(false);
@@ -94,6 +95,11 @@ export default function Chat() {
   const [activeTool, setActiveTool] = useState<'brush' | 'text' | 'none'>('none');
   const [brushColor, setBrushColor] = useState('#10b981'); // Emerald-500
   const [imageTexts, setImageTexts] = useState<{ id: string; text: string; x: number; y: number }[]>([]);
+  const [viewingMedia, setViewingMedia] = useState<{ url: string, type: 'image' | 'video' | 'profile', id?: string } | null>(null);
+  const [isViewingAllMedia, setIsViewingAllMedia] = useState(false);
+  const [drawingHistory, setDrawingHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [zoomLevel, setZoomLevel] = useState(1);
 
   // Click outside to close emoji picker
   useEffect(() => {
@@ -114,6 +120,31 @@ export default function Chat() {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [isEmojiPickerOpen]);
+
+  // Navigation Interceptor for Back Button
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      if (viewingMedia || isCameraOpen || pendingMedia || isViewingAllMedia) {
+        e.preventDefault();
+        setViewingMedia(null);
+        setIsCameraOpen(false);
+        setIsViewingAllMedia(false);
+        setPendingMedia(null);
+        setZoomLevel(1);
+        // Push state back so the user doesn't exit the chat on next back
+        window.history.pushState({ overlay: false }, '');
+      }
+    };
+
+    if (viewingMedia || isCameraOpen || pendingMedia || isViewingAllMedia) {
+      window.history.pushState({ overlay: true }, '');
+      window.addEventListener('popstate', handlePopState);
+    } else {
+      window.removeEventListener('popstate', handlePopState);
+    }
+
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [viewingMedia, isCameraOpen, pendingMedia, isViewingAllMedia]);
 
   useEffect(() => {
     if (!groupId) return;
@@ -827,8 +858,8 @@ export default function Chat() {
   const [isViewingStarred, setIsViewingStarred] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState<string[]>([]);
   const [isForwarding, setIsForwarding] = useState(false);
-  const [viewingMedia, setViewingMedia] = useState<{ url: string, type: 'image' | 'video' | 'profile', id?: string } | null>(null);
-  const [isViewingAllMedia, setIsViewingAllMedia] = useState(false);
+
+
   const [isUploadingGroupAvatar, setIsUploadingGroupAvatar] = useState(false);
   const groupAvatarInputRef = useRef<HTMLInputElement>(null);
 
@@ -1043,17 +1074,31 @@ export default function Chat() {
           const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
           const previewUrl = URL.createObjectURL(blob);
           
-          setPendingMedia({
+          const mediaObj = {
             file,
             previewUrl,
-            type: 'audio',
+            type: 'audio' as const,
             caption: '',
             rotation: 0,
             isMuted: false,
             isRoundCrop: false,
             startTime: 0,
             endTime: 0
-          });
+          };
+
+          setPendingMedia(mediaObj);
+
+          // Reset drawing history for new media
+          setDrawingHistory([]);
+          setHistoryIndex(-1);
+
+          // AUTO-DISPATCH logic for Locked Send
+          if ((recorder as any).autoDispatch) {
+             // We need to call finalDispatchMedia but it relies on pendingMedia state update which is async
+             // So we'll use a local helper or handle it in a useEffect, but for now let's use a small timeout or direct call with object
+             // Actually better: finalDispatchMedia can take an optional media override
+             handleImmediateDispatch(mediaObj);
+          }
         }
         
         // Reset states AFTER capture
@@ -1105,6 +1150,33 @@ export default function Chat() {
       startTime: 0,
       endTime: 0
     });
+    setDrawingHistory([]);
+    setHistoryIndex(-1);
+  }
+
+  async function handleImmediateDispatch(media: any) {
+    if (!currentUser || !groupId) return;
+    setIsUploading(true);
+    try {
+      const fileId = Math.random().toString(36).substring(7);
+      const fileName = `${fileId}.webm`;
+      const filePath = `${groupId}/${fileName}`;
+      const { error: uploadError } = await supabase.storage.from('chat-media').upload(filePath, media.file);
+      if (uploadError) throw uploadError;
+      const { data: { publicUrl } } = supabase.storage.from('chat-media').getPublicUrl(filePath);
+      await supabase.from('messages').insert({
+        group_id: groupId,
+        sender_id: currentUser.id,
+        content: '',
+        type: 'audio',
+        file_url: publicUrl
+      });
+      setPendingMedia(null);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setIsUploading(false);
+    }
   }
 
   async function finalDispatchMedia() {
@@ -2348,15 +2420,18 @@ export default function Chat() {
                   className="hidden"
                   accept="image/*,video/*,application/pdf,.doc,.docx"
                 />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="text-slate-400 hover:text-emerald-500 rounded-full"
-                  onClick={() => setIsCameraOpen(true)}
-                >
-                  <Camera size={24} />
-                </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="text-slate-400 hover:text-emerald-500 rounded-full"
+                    onClick={() => {
+                      setPendingMedia(null);
+                      setIsCameraOpen(true);
+                    }}
+                  >
+                    <Camera size={24} />
+                  </Button>
                 <Button
                   type="button"
                   variant="ghost"
@@ -2409,7 +2484,14 @@ export default function Chat() {
                   handleAudioPointerMove(e);
                 }}
                 onClick={() => {
-                  if (isAudioLocked) stopAudioRecording(false);
+                  if (isAudioLocked) {
+                    // Logic to stop and IMMEDIATELY send
+                    if (audioRecorderRef.current && isRecordingAudio) {
+                      // We need to signal that this should be auto-dispatched
+                      (audioRecorderRef.current as any).autoDispatch = true;
+                      stopAudioRecording(false);
+                    }
+                  }
                 }}
                 size="icon"
                 className={cn(
@@ -2536,6 +2618,23 @@ export default function Chat() {
               </div>
               <div className="flex items-center gap-2">
                 <button 
+                  onClick={() => setZoomLevel(prev => Math.max(1, prev - 0.5))}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
+                  title="Zoom Out"
+                >
+                  <Search size={22} className="scale-x-[-1]" />
+                </button>
+                <div className="text-white min-w-[40px] text-center text-xs font-mono">
+                  {Math.round(zoomLevel * 100)}%
+                </div>
+                <button 
+                  onClick={() => setZoomLevel(prev => Math.min(4, prev + 0.5))}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
+                  title="Zoom In"
+                >
+                  <Search size={22} />
+                </button>
+                <button 
                   onClick={() => {
                     const link = document.createElement('a');
                     link.href = viewingMedia.url;
@@ -2556,33 +2655,43 @@ export default function Chat() {
             </div>
 
             <motion.div
-              drag="y"
+              drag={zoomLevel > 1 ? false : "y"}
               dragConstraints={{ top: 0, bottom: 0 }}
               dragElastic={0.7}
               onDragEnd={(_, info) => {
-                if (Math.abs(info.offset.y) > 150) {
+                if (zoomLevel === 1 && Math.abs(info.offset.y) > 150) {
                   setViewingMedia(null);
                 }
               }}
-              className="w-full h-full flex items-center justify-center p-4 relative"
+              className="w-full h-full flex items-center justify-center p-4 relative overflow-hidden"
+              onWheel={(e) => {
+                if (e.ctrlKey || e.metaKey) {
+                  setZoomLevel(prev => Math.min(4, Math.max(1, prev - e.deltaY * 0.005)));
+                }
+              }}
             >
               {viewingMedia.type === 'image' || viewingMedia.type === 'profile' ? (
-                <motion.img
-                  layoutId={viewingMedia.type === 'profile' ? `avatar-${groupId}` : `img-${viewingMedia.id}`}
-                  src={viewingMedia.url}
-                  className="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain z-10"
-                  initial={{ scale: 0.9, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0.9, opacity: 0 }}
-                  transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                  whileHover={{ scale: 1.02 }}
-                />
+                <motion.div
+                  style={{ scale: zoomLevel }}
+                  className="transition-transform duration-200"
+                >
+                  <motion.img
+                    layoutId={viewingMedia.type === 'profile' ? `avatar-${groupId}` : `img-${viewingMedia.id}`}
+                    src={viewingMedia.url}
+                    className="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain z-10"
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.9, opacity: 0 }}
+                    transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                  />
+                </motion.div>
               ) : (
                 <motion.div 
                   initial={{ scale: 0.9, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
                   exit={{ scale: 0.9, opacity: 0 }}
-                  className="w-full max-w-4xl max-h-[80vh] flex items-center justify-center"
+                  style={{ scale: zoomLevel }}
+                  className="w-full max-w-4xl max-h-[80vh] flex items-center justify-center transition-transform duration-200"
                 >
                   <video 
                     src={viewingMedia.url} 
@@ -2969,6 +3078,13 @@ export default function Chat() {
                     }}
                     onPointerUp={(e) => {
                       (e.currentTarget as any).isDrawing = false;
+                      // Save history
+                      const canvas = e.currentTarget;
+                      const dataURL = canvas.toDataURL();
+                      const newHistory = drawingHistory.slice(0, historyIndex + 1);
+                      newHistory.push(dataURL);
+                      setDrawingHistory(newHistory);
+                      setHistoryIndex(newHistory.length - 1);
                     }}
                     onPointerLeave={(e) => {
                       (e.currentTarget as any).isDrawing = false;
@@ -2976,6 +3092,56 @@ export default function Chat() {
                     width={800} 
                     height={1200}
                   />
+
+                  {/* Undo/Redo Overlay Controls */}
+                  <div className="absolute top-4 left-4 flex gap-2 z-30">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (historyIndex >= 0) {
+                          const newIndex = historyIndex - 1;
+                          setHistoryIndex(newIndex);
+                          const canvas = document.getElementById('doodle-canvas') as HTMLCanvasElement;
+                          const ctx = canvas?.getContext('2d');
+                          if (ctx && canvas) {
+                            ctx.clearRect(0, 0, canvas.width, canvas.height);
+                            if (newIndex >= 0) {
+                              const img = new Image();
+                              img.src = drawingHistory[newIndex];
+                              img.onload = () => ctx.drawImage(img, 0, 0);
+                            }
+                          }
+                        }
+                      }}
+                      disabled={historyIndex < 0}
+                      className="p-2 bg-black/40 text-white rounded-full disabled:opacity-30 hover:bg-black/60 transition-colors"
+                    >
+                      <RotateCcw size={20} />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (historyIndex < drawingHistory.length - 1) {
+                          const newIndex = historyIndex + 1;
+                          setHistoryIndex(newIndex);
+                          const canvas = document.getElementById('doodle-canvas') as HTMLCanvasElement;
+                          const ctx = canvas?.getContext('2d');
+                          if (ctx && canvas) {
+                            const img = new Image();
+                            img.src = drawingHistory[newIndex];
+                            img.onload = () => {
+                              ctx.clearRect(0, 0, canvas.width, canvas.height);
+                              ctx.drawImage(img, 0, 0);
+                            };
+                          }
+                        }
+                      }}
+                      disabled={historyIndex >= drawingHistory.length - 1}
+                      className="p-2 bg-black/40 text-white rounded-full disabled:opacity-30 hover:bg-black/60 transition-colors"
+                    >
+                      <RotateCcw size={20} className="scale-x-[-1]" />
+                    </button>
+                  </div>
 
                   {/* Circular Mask Overlay */}
                   {pendingMedia.isRoundCrop && (
