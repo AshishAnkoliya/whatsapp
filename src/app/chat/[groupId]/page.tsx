@@ -4,7 +4,7 @@ import * as React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter as useNavigate, useParams } from 'next/navigation';
 
-import { ArrowLeft, Phone, Video, MoreVertical, Send, Paperclip, Smile, Image as ImageIcon, FileText, Mic, Plus, X, UserPlus, Shield, Search, LogOut, Camera, ChevronRight, Trash2, ExternalLink, Star, Bell, BellOff, Check, CheckCheck, Pencil, RefreshCw, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Phone, Video, MoreVertical, Send, Paperclip, Smile, Image as ImageIcon, FileText, Mic, Plus, X, UserPlus, Shield, Search, LogOut, Camera, ChevronRight, Trash2, ExternalLink, Star, Bell, BellOff, Check, CheckCheck, Pencil, RefreshCw, RotateCcw, Play, Pause } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'motion/react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -56,16 +56,18 @@ const AudioMessagePlayer = ({ url, senderName, senderAvatar, isMe }: { url: stri
   };
 
   const formatTime = (time: number) => {
+    if (isNaN(time) || !isFinite(time)) return "0:00";
     const mins = Math.floor(time / 60);
     const secs = Math.floor(time % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const bars = [0.3, 0.5, 0.8, 0.4, 0.9, 0.6, 0.4, 0.7, 0.3, 0.8, 0.5, 0.4, 0.9, 0.6, 0.3, 0.7, 0.5, 0.8, 0.4, 0.6, 0.3, 0.7, 0.5, 0.2];
+  // 60-bar dense waveform matching screenshot fine lines
+  const bars = Array.from({ length: 60 }, () => Math.random() * 0.7 + 0.2);
 
   return (
     <div className={cn(
-      "flex items-center gap-3 w-full p-1",
+      "flex items-center gap-3 w-full",
       isMe ? "text-slate-900" : "text-slate-800"
     )}>
       <audio 
@@ -77,33 +79,30 @@ const AudioMessagePlayer = ({ url, senderName, senderAvatar, isMe }: { url: stri
         className="hidden"
       />
       
-      {/* Play/Pause Button */}
+      {/* Play/Pause Button - Perfect Grey Circle with White Triangle */}
       <button 
         onClick={togglePlay}
-        className={cn(
-          "w-12 h-12 rounded-full flex items-center justify-center transition-all active:scale-95 shadow-sm",
-          isMe ? "bg-emerald-500 text-white hover:bg-emerald-600" : "bg-emerald-500 text-white hover:bg-emerald-600"
-        )}
+        className="w-12 h-12 bg-slate-400 rounded-full flex items-center justify-center transition-all active:scale-95 text-white shadow-sm flex-shrink-0"
       >
         {isPlaying ? (
-          <div className="flex gap-1">
-             <div className="w-1 h-4 bg-current rounded-full" />
-             <div className="w-1 h-4 bg-current rounded-full" />
-          </div>
+          <Pause size={24} fill="white" />
         ) : (
-          <div className="ml-1 border-l-[14px] border-l-current border-y-[9px] border-y-transparent" />
+          <Play size={24} fill="white" className="ml-1" />
         )}
       </button>
 
       {/* Waveform & Info */}
-      <div className="flex-1 flex flex-col gap-1.5">
-        <div className="flex items-end gap-[2px] h-6 px-1 relative">
-           {/* Progress Line Overlay */}
-           <div 
-             className="absolute bottom-0 left-1 h-full bg-emerald-500/10 pointer-events-none transition-all duration-300" 
-             style={{ width: `${(currentTime / (duration || 1)) * 100}%` }}
-           />
-           
+      <div className="flex-1 flex flex-col gap-1 pr-2">
+        <div className="flex items-end gap-[1.5px] h-8 relative cursor-pointer" 
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const pct = x / rect.width;
+            if (audioRef.current) {
+              audioRef.current.currentTime = pct * duration;
+            }
+          }}
+        >
            {bars.map((h, i) => {
              const progress = (currentTime / (duration || 1)) * bars.length;
              const isActive = i <= progress;
@@ -111,8 +110,8 @@ const AudioMessagePlayer = ({ url, senderName, senderAvatar, isMe }: { url: stri
                <div 
                  key={i} 
                  className={cn(
-                   "flex-1 rounded-full transition-colors duration-300",
-                   isActive ? (isMe ? "bg-emerald-600" : "bg-emerald-500") : "bg-slate-300"
+                   "w-[2px] rounded-full transition-colors duration-200",
+                   isActive ? "bg-[#53BDEB]" : "bg-slate-300"
                  )} 
                  style={{ height: `${h * 100}%` }} 
                />
@@ -120,20 +119,22 @@ const AudioMessagePlayer = ({ url, senderName, senderAvatar, isMe }: { url: stri
            })}
         </div>
         
-        <div className="flex justify-between items-center px-1">
-          <span className="text-[10px] font-bold opacity-60">
+        <div className="flex justify-between items-center -mt-0.5">
+          <span className="text-[10px] text-slate-500 font-medium">
             {isPlaying ? formatTime(currentTime) : formatTime(duration)}
           </span>
           
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setPlaybackRate(prev => prev === 1 ? 1.5 : prev === 1.5 ? 2 : 1);
-            }}
-            className="px-2 py-0.5 bg-black/5 hover:bg-black/10 rounded-full text-[10px] font-bold transition-colors"
-          >
-            {playbackRate}x
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setPlaybackRate(prev => prev === 1 ? 1.5 : prev === 1.5 ? 2 : 1);
+              }}
+              className="px-2 py-0.5 bg-slate-700 text-white rounded-full text-[10px] font-bold shadow-sm hover:bg-slate-800 transition-colors"
+            >
+              {playbackRate}x
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -2215,7 +2216,7 @@ export default function Chat() {
                       className={cn(
                         "relative px-4 py-2 rounded-2xl shadow-sm text-sm transition-all text-left outline-none",
                         isMe
-                          ? "bg-[#E1EFFF] text-slate-900 rounded-br-none shadow-sm border border-blue-100/50"
+                          ? "bg-[#E2F9C3] text-slate-900 rounded-br-none shadow-sm border border-[#d6eeba]"
                           : "bg-white text-slate-800 rounded-bl-none border border-slate-100",
                         selectedMessageId === msg.id && "ring-4 ring-emerald-500/30 scale-[0.98]",
                         !isNewSender && (isMe ? "mt-0.5" : "mt-0.5") // Tighter spacing for same-sender blocks
@@ -2271,12 +2272,12 @@ export default function Chat() {
                       )}
 
                       {msg.type === 'audio' && msg.file_url && (
-                        <div className="mb-2 flex items-center gap-3 min-w-[280px] sm:min-w-[320px]">
+                        <div className="flex items-center gap-2 min-w-[280px] sm:min-w-[320px]">
                            {/* Avatar like WhatsApp */}
                            <div className="relative flex-shrink-0">
-                             <Avatar className="w-12 h-12 ring-2 ring-white shadow-sm">
+                             <Avatar className="w-12 h-12 ring-2 ring-white shadow-md">
                                <AvatarImage src={msg.sender_avatar} />
-                               <AvatarFallback className="bg-emerald-100 text-emerald-700 font-bold">
+                               <AvatarFallback className="bg-slate-200 text-slate-600 font-bold">
                                  {msg.sender_name?.substring(0, 2).toUpperCase()}
                                </AvatarFallback>
                              </Avatar>
