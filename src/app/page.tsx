@@ -4,7 +4,7 @@ import * as React from 'react';
 import { useState, useEffect } from 'react';
 import { useRouter as useNavigate } from 'next/navigation';
 
-import { Search, Plus, MoreVertical, Camera, MessageSquare, X, RefreshCw, Upload, Users, MessageSquarePlus } from 'lucide-react';
+import { Search, Plus, MoreVertical, Camera, MessageSquare, X, RefreshCw, Upload, Users, MessageSquarePlus, ArrowLeft, Video, Paperclip } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'motion/react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -43,6 +43,7 @@ export default function Home() {
   const [isSearchingUsers, setIsSearchingUsers] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+  const [viewingMedia, setViewingMedia] = useState<{ url: string, type: 'image' | 'video' | 'profile', id?: string } | null>(null);
 
 
   useEffect(() => {
@@ -471,7 +472,16 @@ export default function Home() {
                   onClick={() => navigate.push(`/chat/${group.id}`)}
                   className="flex items-center gap-4 p-3 bg-white hover:bg-slate-50 cursor-pointer transition-all active:scale-[0.98] rounded-2xl relative mb-1"
                 >
-                    <Avatar className="w-14 h-14 border-2 border-white shadow-sm">
+                    <Avatar 
+                      className="w-14 h-14 border-2 border-white shadow-sm cursor-pointer hover:scale-105 active:scale-95 transition-transform"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const avatar = (group as any).display_avatar;
+                        if (avatar) {
+                          setViewingMedia({ url: avatar, type: 'profile', id: group.id });
+                        }
+                      }}
+                    >
                       <AvatarImage src={(group as any).display_avatar} />
                       <AvatarFallback className="bg-emerald-100 text-emerald-700 font-bold text-lg">
                         {(group as any).display_name?.substring(0, 2).toUpperCase() || '??'}
@@ -665,6 +675,103 @@ export default function Home() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AnimatePresence>
+        {viewingMedia && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex flex-col items-center justify-center p-0 m-0"
+          >
+            {/* Header Controls */}
+            <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-center bg-gradient-to-b from-black/80 to-transparent z-[110]">
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={() => setViewingMedia(null)}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
+                >
+                  <ArrowLeft size={24} />
+                </button>
+                <div className="text-white">
+                  <p className="font-bold text-sm">
+                    {viewingMedia.type === 'profile' 
+                      ? ((groups.find(g => g.id === viewingMedia.id) as any)?.display_name || 'Profile') 
+                      : (viewingMedia.type === 'video' ? 'Video' : 'Photo')}
+                  </p>
+                  {viewingMedia.type !== 'profile' && viewingMedia.id && (
+                    <p className="text-[10px] text-white/40">
+                      {groups.find(g => g.id === viewingMedia.id)?.name || 'Shared Media'}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => {
+                    const link = document.createElement('a');
+                    link.href = viewingMedia.url;
+                    link.download = `media_${Date.now()}`;
+                    link.click();
+                  }}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
+                >
+                  <Paperclip size={20} className="rotate-45" />
+                </button>
+                <button 
+                  onClick={() => setViewingMedia(null)}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+            </div>
+
+            <motion.div
+              drag="y"
+              dragConstraints={{ top: 0, bottom: 0 }}
+              dragElastic={0.7}
+              onDragEnd={(_, info) => {
+                if (Math.abs(info.offset.y) > 150) {
+                  setViewingMedia(null);
+                }
+              }}
+              className="w-full h-full flex items-center justify-center p-4 relative"
+            >
+              {viewingMedia.type === 'image' || viewingMedia.type === 'profile' ? (
+                <motion.img
+                  layoutId={`avatar-${viewingMedia.id}`}
+                  src={viewingMedia.url}
+                  className="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain z-10 select-none"
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.9, opacity: 0 }}
+                  transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                  whileHover={{ scale: 1.02 }}
+                />
+              ) : (
+                <motion.div 
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.9, opacity: 0 }}
+                  className="w-full max-w-4xl max-h-[80vh] flex items-center justify-center"
+                >
+                  <video 
+                    src={viewingMedia.url} 
+                    controls 
+                    autoPlay 
+                    className="max-w-full max-h-[80vh] rounded-xl shadow-2xl"
+                  />
+                </motion.div>
+              )}
+            </motion.div>
+            
+            <div className="absolute bottom-8 left-0 right-0 flex justify-center text-white/40 text-[10px] uppercase tracking-widest font-bold pointer-events-none">
+              Swipe up or down to close
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
     </div>
   );

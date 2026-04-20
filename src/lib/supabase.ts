@@ -48,7 +48,7 @@ export type Message = {
   group_id: string;
   sender_id: string;
   content: string;
-  type: 'text' | 'image' | 'video' | 'document' | 'system';
+  type: 'text' | 'image' | 'video' | 'document' | 'system' | 'audio';
   file_url?: string;
   created_at: string;
   sender_name?: string;

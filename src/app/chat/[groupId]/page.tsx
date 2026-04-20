@@ -4,7 +4,7 @@ import * as React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter as useNavigate, useParams } from 'next/navigation';
 
-import { ArrowLeft, Phone, Video, MoreVertical, Send, Paperclip, Smile, Image as ImageIcon, FileText, Mic, Plus, X, UserPlus, Shield, Search, LogOut, Camera, ChevronRight, Trash2, ExternalLink, Star, Bell, BellOff, Check, CheckCheck, Pencil } from 'lucide-react';
+import { ArrowLeft, Phone, Video, MoreVertical, Send, Paperclip, Smile, Image as ImageIcon, FileText, Mic, Plus, X, UserPlus, Shield, Search, LogOut, Camera, ChevronRight, Trash2, ExternalLink, Star, Bell, BellOff, Check, CheckCheck, Pencil, RefreshCw } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'motion/react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -52,6 +52,47 @@ export default function Chat() {
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
   const [isSubscribing, setIsSubscribing] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const [audioTime, setAudioTime] = useState(0);
+  const [isAudioCancelled, setIsAudioCancelled] = useState(false);
+  const [audioDragX, setAudioDragX] = useState(0);
+  const [audioStartX, setAudioStartX] = useState(0);
+  const audioRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const audioIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [isCapturing, setIsCapturing] = useState(false);
+
+  // Click outside to close emoji picker
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const container = document.getElementById('emoji-picker-container');
+      if (container && !container.contains(event.target as Node)) {
+        setIsEmojiPickerOpen(false);
+      }
+    };
+
+    if (isEmojiPickerOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    } else {
+      document.removeEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isEmojiPickerOpen]);
 
   useEffect(() => {
     if (!groupId) return;
@@ -765,10 +806,185 @@ export default function Chat() {
   const [isViewingStarred, setIsViewingStarred] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState<string[]>([]);
   const [isForwarding, setIsForwarding] = useState(false);
-  const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const [viewingMedia, setViewingMedia] = useState<{ url: string, type: 'image' | 'video' | 'profile', id?: string } | null>(null);
   const [isViewingAllMedia, setIsViewingAllMedia] = useState(false);
   const [isUploadingGroupAvatar, setIsUploadingGroupAvatar] = useState(false);
   const groupAvatarInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isCameraOpen) {
+      startCamera();
+    } else {
+      stopCamera();
+    }
+    return () => {
+      stopCamera();
+      if (recordingIntervalRef.current) clearInterval(recordingIntervalRef.current);
+    }
+  }, [isCameraOpen, facingMode]);
+
+  const startCamera = async () => {
+    try {
+      if (cameraStream) stopCamera(); // Stop old stream before restarting
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: facingMode }, 
+        audio: true 
+      });
+      setCameraStream(stream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      console.error("Camera access error:", err);
+      toast.error("Could not access camera. Please check permissions.");
+      setIsCameraOpen(false);
+    }
+  };
+
+  const switchCamera = () => {
+    setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
+  };
+
+  const handleStartRecording = () => {
+    if (!cameraStream) return;
+    
+    const chunks: Blob[] = [];
+    const options = { mimeType: 'video/webm;codecs=vp9,opus' };
+    
+    try {
+      const recorder = new MediaRecorder(cameraStream);
+      mediaRecorderRef.current = recorder;
+      
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+      
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const file = new File([blob], `video_${Date.now()}.mp4`, { type: 'video/mp4' });
+        // Forward as a mock event to handleFileUpload
+        handleFileUpload({ target: { files: [file] } } as any);
+      };
+      
+      recorder.start();
+      setIsRecording(true);
+      setRecordingTime(0);
+      recordingIntervalRef.current = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error("Recording error:", err);
+      toast.error("Recording failed to start.");
+    }
+  };
+
+  const handleStopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current);
+      }
+    }
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const stopCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
+    }
+  };
+
+  const capturePhoto = () => {
+    if (videoRef.current && canvasRef.current) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          if (blob) {
+            const file = new File([blob], `camera_${Date.now()}.jpg`, { type: 'image/jpeg' });
+            // Mock file object for existing handleFileUpload
+            const event = {
+              target: {
+                files: [file]
+              }
+            } as any;
+            handleFileUpload(event);
+            setIsCameraOpen(false);
+          }
+        }, 'image/jpeg', 0.9);
+      }
+    }
+  };
+
+  const startAudioRecording = async (e: React.MouseEvent | React.TouchEvent) => {
+    try {
+      const startX = 'clientX' in e ? e.clientX : e.touches[0].clientX;
+      setAudioStartX(startX);
+      setAudioDragX(0);
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      audioRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+      setIsAudioCancelled(false);
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(track => track.stop());
+        if (!isAudioCancelled && audioChunksRef.current.length > 0) {
+          const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
+          handleFileUpload({ target: { files: [file] } } as any);
+        }
+      };
+
+      recorder.start();
+      setIsRecordingAudio(true);
+      setAudioTime(0);
+      audioIntervalRef.current = setInterval(() => {
+        setAudioTime(prev => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error("Audio recording error:", err);
+      toast.error("Could not access microphone.");
+    }
+  };
+
+  const handleAudioPointerMove = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!isRecordingAudio) return;
+    const currentX = 'clientX' in e ? e.clientX : e.touches[0].clientX;
+    const deltaX = currentX - audioStartX;
+    setAudioDragX(deltaX);
+    
+    if (deltaX < -80) { // Slide threshold reached
+      stopAudioRecording(true);
+    }
+  };
+
+  const stopAudioRecording = (cancel = false) => {
+    if (audioRecorderRef.current && isRecordingAudio) {
+      setIsAudioCancelled(cancel);
+      audioRecorderRef.current.stop();
+      setIsRecordingAudio(false);
+      setAudioTime(0);
+      setAudioDragX(0);
+      if (audioIntervalRef.current) clearInterval(audioIntervalRef.current);
+    }
+  };
   const [forwardMsg, setForwardMsg] = useState<Message | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
@@ -1229,7 +1445,13 @@ export default function Chat() {
                       <button className="flex flex-1 items-center gap-3 cursor-pointer group text-left outline-none" />
                     }
                   >
-                    <Avatar className="w-10 h-10 group-active:scale-95 transition-transform">
+                    <Avatar 
+                      className="w-10 h-10 group-active:scale-95 transition-transform cursor-pointer hover:ring-2 hover:ring-emerald-500/20"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (group?.avatar_url) setViewingMedia({ url: group.avatar_url, type: 'profile' });
+                      }}
+                    >
                       <AvatarImage src={group?.avatar_url} />
                       <AvatarFallback className="bg-emerald-100 text-emerald-700 font-bold">
                         {group?.name.substring(0, 2).toUpperCase()}
@@ -1597,7 +1819,13 @@ export default function Chat() {
                   {!isMe && group?.type === 'group' && (
                     <div className="w-8 h-8 flex-shrink-0">
                       {showAvatar && (
-                        <Avatar className="w-8 h-8 ring-2 ring-white shadow-sm">
+                        <Avatar 
+                          className="w-8 h-8 ring-2 ring-white shadow-sm cursor-pointer hover:scale-110 transition-transform active:scale-95"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (msg.sender_avatar) setViewingMedia({ url: msg.sender_avatar, type: 'profile' });
+                          }}
+                        >
                           <AvatarImage src={msg.sender_avatar} />
                           <AvatarFallback className="bg-slate-200 text-[10px] font-bold">
                             {msg.sender_name?.substring(0, 2).toUpperCase() || 'M'}
@@ -1648,7 +1876,7 @@ export default function Chat() {
                           className="mb-2 rounded-lg overflow-hidden border border-white/20 cursor-zoom-in"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setViewingImage(msg.file_url || null);
+                            setViewingMedia({ url: msg.file_url || '', type: 'image', id: msg.id });
                           }}
                         >
                           <motion.img
@@ -1665,8 +1893,54 @@ export default function Chat() {
                       )}
 
                       {msg.type === 'video' && msg.file_url && (
-                        <div className="mb-2 rounded-lg overflow-hidden border border-white/20">
-                          <video src={msg.file_url} controls className="max-w-full h-auto" />
+                        <div 
+                          className="mb-2 rounded-lg overflow-hidden border border-white/20 relative group cursor-pointer"
+                          onClick={() => setViewingMedia({ url: msg.file_url || '', type: 'video', id: msg.id })}
+                        >
+                          <video src={msg.file_url} className="max-w-full h-auto" />
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-all">
+                            <div className="w-16 h-16 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center border border-white/30 text-white transform group-hover:scale-110 transition-transform">
+                              <Video size={32} fill="currentColor" />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {msg.type === 'audio' && msg.file_url && (
+                        <div className="mb-2 p-3 bg-emerald-50/50 rounded-[2rem] border border-emerald-100 min-w-[240px] shadow-sm">
+                          <div className="flex items-center gap-4">
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const audio = document.getElementById(`audio-${msg.id}`) as HTMLAudioElement;
+                                if (audio.paused) audio.play();
+                                else audio.pause();
+                              }}
+                              className="w-12 h-12 bg-emerald-500 rounded-full flex items-center justify-center text-white shadow-md active:scale-90 transition-all hover:bg-emerald-600"
+                            >
+                              <div className="flex items-center justify-center">
+                                {/* Simple CSS-based play/pause icon for performance */}
+                                <div className="border-l-[12px] border-l-white border-y-[8px] border-y-transparent ml-1" />
+                              </div>
+                            </button>
+                            <div className="flex-1 flex flex-col gap-2">
+                              {/* Animated Waveform Mockup */}
+                              <div className="flex items-end gap-[2px] h-6 px-1">
+                                {[0.3, 0.5, 0.8, 0.4, 0.9, 0.6, 0.3, 0.7, 0.4, 0.8, 0.5, 0.3, 0.6].map((h, i) => (
+                                  <div 
+                                    key={i} 
+                                    className="flex-1 bg-emerald-300 rounded-full" 
+                                    style={{ height: `${h * 100}%` }} 
+                                  />
+                                ))}
+                              </div>
+                              <div className="flex justify-between text-[10px] text-emerald-600/60 font-bold uppercase tracking-wider">
+                                <span>Voice Message</span>
+                                <span>0:00</span>
+                              </div>
+                            </div>
+                            <audio id={`audio-${msg.id}`} src={msg.file_url} className="hidden" />
+                          </div>
                         </div>
                       )}
 
@@ -1827,40 +2101,110 @@ export default function Chat() {
         </AnimatePresence>
 
         <form onSubmit={handleSendMessage} className="flex items-center gap-2">
-          <div className="flex items-center gap-1">
-            <Button type="button" variant="ghost" size="icon" className="text-slate-400 hover:text-emerald-500 rounded-full">
-              <Smile size={24} />
-            </Button>
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileUpload}
-              className="hidden"
-              accept="image/*,video/*,application/pdf,.doc,.docx"
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="text-slate-400 hover:text-emerald-500 rounded-full"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isUploading}
-            >
-              <Paperclip size={24} className={isUploading ? "animate-spin" : ""} />
-            </Button>
-          </div>
+          {isRecordingAudio ? (
+            <div className="flex-1 flex items-center justify-between bg-emerald-50 rounded-full px-6 py-3 border border-emerald-100">
+              <div className="flex items-center gap-3">
+                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                <span className="text-sm font-bold text-emerald-700">{formatTime(audioTime)}</span>
+              </div>
+              <motion.div 
+                initial={{ x: 20, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                className="text-xs text-emerald-600 font-medium flex items-center gap-2"
+              >
+                <span>Slide left to cancel</span>
+                <ChevronRight size={14} className="rotate-180 opacity-50" />
+              </motion.div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-1">
+                <div className="relative" id="emoji-picker-container">
+                  <Button 
+                    type="button" 
+                    variant="ghost" 
+                    size="icon" 
+                    className={cn(
+                      "text-slate-400 hover:text-emerald-500 rounded-full transition-colors",
+                      isEmojiPickerOpen && "text-emerald-500 bg-emerald-50"
+                    )}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsEmojiPickerOpen(!isEmojiPickerOpen);
+                    }}
+                  >
+                    <Smile size={24} />
+                  </Button>
 
-          <div className="flex-1 relative">
-            <Input
-              value={newMessage}
-              onChange={(e) => {
-                setNewMessage(e.target.value);
-                handleTyping();
-              }}
-              placeholder="Type a message..."
-              className="bg-slate-100 border-none rounded-full px-6 py-6 focus-visible:ring-2 focus-visible:ring-emerald-500/20 transition-all placeholder:text-slate-400 placeholder:font-normal"
-            />
-          </div>
+                  <AnimatePresence>
+                    {isEmojiPickerOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                        className="absolute bottom-full left-0 mb-4 w-72 bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden z-50 p-4"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="grid grid-cols-6 gap-2 max-h-60 overflow-y-auto no-scrollbar pb-2">
+                          {['😀', '😃', '😄', '😁', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😝', '😜', '🤪', '🤨', '🧐', '🤓', '😎', '🤩', '🥳', '😏', '😒', '😞', '😔', '😟', '😕', '🙁', '☹️', '😣', '😖', '😫', '😩', '🥺', '😢', '😭', '😤', '😠', '😡', '🤬', '🤯', '😳', '🥵', '🥶', '😱', '😨', '😰', '😥', '😓', '🤗', '🤔', '🤭', '🤫', '🤥', '😶', '😐', '😑', '😬', '🙄', '😯', '😦', '😧', '😮', '😲', '🥱', '😴', '🤤', '😪', '😵', '🤐', '🥴', '🤢', '🤮', '🤧', '😷', '🤒', '🤕', '🤑', '🤠', '😈', '👿', '👹', '👺', '🤡', '👻', '💀', '☠️', '👽', '👾', '🤖', '🎃', '😺', '😸', '😹', '😻', '😼', '😽', '🙀', '😿', '😾'].map(emoji => (
+                            <button
+                              key={emoji}
+                              type="button"
+                              onClick={() => {
+                                setNewMessage(prev => prev + emoji);
+                              }}
+                              className="text-2xl hover:bg-slate-50 p-1 rounded-xl transition-all active:scale-90"
+                            >
+                              {emoji}
+                            </button>
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileUpload}
+                  className="hidden"
+                  accept="image/*,video/*,application/pdf,.doc,.docx"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="text-slate-400 hover:text-emerald-500 rounded-full"
+                  onClick={() => setIsCameraOpen(true)}
+                >
+                  <Camera size={24} />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="text-slate-400 hover:text-emerald-500 rounded-full"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading}
+                >
+                  <Paperclip size={24} className={isUploading ? "animate-spin" : ""} />
+                </Button>
+              </div>
+
+              <div className="flex-1 relative">
+                <Input
+                  value={newMessage}
+                  onChange={(e) => {
+                    setNewMessage(e.target.value);
+                    handleTyping();
+                  }}
+                  onFocus={() => setIsEmojiPickerOpen(false)}
+                  placeholder="Type a message..."
+                  className="bg-slate-100 border-none rounded-full px-6 py-6 focus-visible:ring-2 focus-visible:ring-emerald-500/20 transition-all placeholder:text-slate-400 placeholder:font-normal"
+                />
+              </div>
+            </>
+          )}
 
           <motion.div whileTap={{ scale: 0.9 }}>
             {newMessage.trim() ? (
@@ -1874,10 +2218,19 @@ export default function Chat() {
             ) : (
               <Button
                 type="button"
+                onMouseDown={(e) => startAudioRecording(e)}
+                onMouseUp={() => stopAudioRecording(false)}
+                onMouseMove={(e) => handleAudioPointerMove(e)}
+                onTouchStart={(e) => startAudioRecording(e)}
+                onTouchEnd={() => stopAudioRecording(false)}
+                onTouchMove={(e) => handleAudioPointerMove(e)}
                 size="icon"
-                className="bg-emerald-500 hover:bg-emerald-600 text-white rounded-full w-12 h-12 shadow-lg shadow-emerald-200"
+                className={cn(
+                  "bg-emerald-500 hover:bg-emerald-600 text-white rounded-full w-12 h-12 shadow-lg shadow-emerald-200 transition-all touch-none select-none",
+                  isRecordingAudio && "scale-150 ring-8 ring-emerald-500/20"
+                )}
               >
-                <Mic size={20} />
+                <Mic size={20} className={isRecordingAudio ? "animate-pulse" : ""} />
               </Button>
             )}
           </motion.div>
@@ -1959,30 +2312,99 @@ export default function Chat() {
         </DialogContent>
       </Dialog>
 
-      {/* Lightbox / Zoom Dialog */}
+      {/* Advanced Media Viewer (Lightbox) */}
       <AnimatePresence>
-        {viewingImage && (
+        {viewingMedia && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => setViewingImage(null)}
-            className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out"
+            className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex flex-col items-center justify-center"
           >
-            <motion.button
-              className="absolute top-6 right-6 text-white/50 hover:text-white p-2"
-              onClick={() => setViewingImage(null)}
+            {/* Header Controls */}
+            <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-center bg-gradient-to-b from-black/60 to-transparent z-50">
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={() => setViewingMedia(null)}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
+                >
+                  <ArrowLeft size={24} />
+                </button>
+                <div className="text-white">
+                  <p className="font-bold text-sm">
+                    {viewingMedia.type === 'profile' ? (group?.name || 'Profile') : 
+                     viewingMedia.type === 'video' ? 'Video' : 'Photo'}
+                  </p>
+                  {viewingMedia.type !== 'profile' && viewingMedia.id && (
+                    <p className="text-[10px] text-white/60">
+                      {messages.find(m => m.id === viewingMedia.id)?.sender_name || 'Shared Media'}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => {
+                    const link = document.createElement('a');
+                    link.href = viewingMedia.url;
+                    link.download = `media_${Date.now()}`;
+                    link.click();
+                  }}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
+                >
+                  <Paperclip size={20} className="rotate-45" />
+                </button>
+                <button 
+                  onClick={() => setViewingMedia(null)}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+            </div>
+
+            <motion.div
+              drag="y"
+              dragConstraints={{ top: 0, bottom: 0 }}
+              dragElastic={0.7}
+              onDragEnd={(_, info) => {
+                if (Math.abs(info.offset.y) > 150) {
+                  setViewingMedia(null);
+                }
+              }}
+              className="w-full h-full flex items-center justify-center p-4 relative"
             >
-              <X size={32} />
-            </motion.button>
-            <motion.img
-              layoutId={`img-${messages.find(m => m.file_url === viewingImage)?.id}`}
-              src={viewingImage}
-              className="max-w-full max-h-[90vh] rounded-lg shadow-2xl object-contain"
-              initial={{ scale: 0.9 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.9 }}
-            />
+              {viewingMedia.type === 'image' || viewingMedia.type === 'profile' ? (
+                <motion.img
+                  layoutId={viewingMedia.type === 'profile' ? `avatar-${groupId}` : `img-${viewingMedia.id}`}
+                  src={viewingMedia.url}
+                  className="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain z-10"
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.9, opacity: 0 }}
+                  transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                  whileHover={{ scale: 1.02 }}
+                />
+              ) : (
+                <motion.div 
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.9, opacity: 0 }}
+                  className="w-full max-w-4xl max-h-[80vh] flex items-center justify-center"
+                >
+                  <video 
+                    src={viewingMedia.url} 
+                    controls 
+                    autoPlay 
+                    className="max-w-full max-h-[80vh] rounded-xl shadow-2xl "
+                  />
+                </motion.div>
+              )}
+            </motion.div>
+            
+            <div className="absolute bottom-8 left-0 right-0 flex justify-center text-white/40 text-[10px] uppercase tracking-widest font-bold">
+              Swipe up or down to close
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -2013,7 +2435,7 @@ export default function Chat() {
                     {m.file_url && (
                       <div
                         className="mt-2 rounded-xl overflow-hidden cursor-pointer"
-                        onClick={() => { setViewingImage(m.file_url || null); setIsViewingStarred(false); }}
+                        onClick={() => { setViewingMedia({ url: m.file_url || '', type: 'image', id: m.id }); setIsViewingStarred(false); }}
                       >
                         <img
                           src={m.file_url}
@@ -2133,6 +2555,81 @@ export default function Chat() {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Camera Capture Overlay */}
+      <AnimatePresence>
+        {isCameraOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] bg-black flex flex-col items-center justify-center p-0 m-0"
+          >
+            <div className="absolute top-6 left-6 z-[210]">
+              <button 
+                onClick={() => setIsCameraOpen(false)}
+                className="p-3 bg-white/10 backdrop-blur-md rounded-full text-white hover:bg-white/20 transition-colors"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
+              <video 
+                ref={videoRef}
+                autoPlay 
+                playsInline 
+                className="w-full h-full object-cover"
+              />
+              <canvas ref={canvasRef} className="hidden" />
+              
+              <div className="absolute bottom-12 left-0 right-0 flex flex-col items-center justify-center gap-6 z-[210]">
+                {isRecording ? (
+                  <div className="bg-red-500/90 backdrop-blur-md px-6 py-2 rounded-full text-white text-sm font-bold flex items-center gap-2 animate-pulse mb-4">
+                    <div className="w-2 h-2 bg-white rounded-full" />
+                    {formatTime(recordingTime)}
+                  </div>
+                ) : (
+                  <div className="bg-black/40 backdrop-blur-sm px-4 py-2 rounded-full text-white/80 text-xs font-medium uppercase tracking-[0.2em] mb-4">
+                    Tap for Photo • Hold for Video
+                  </div>
+                )}
+                
+                <div className="flex items-center gap-12">
+                  <button
+                    onClick={switchCamera}
+                    disabled={isRecording}
+                    className="p-4 bg-white/10 backdrop-blur-md rounded-full text-white hover:bg-white/20 transition-all active:scale-90 disabled:opacity-0"
+                  >
+                    <RefreshCw size={28} />
+                  </button>
+
+                  <button
+                    onMouseDown={handleStartRecording}
+                    onMouseUp={handleStopRecording}
+                    onTouchStart={handleStartRecording}
+                    onTouchEnd={handleStopRecording}
+                    onClick={() => {
+                      if (!isRecording) capturePhoto();
+                    }}
+                    className={cn(
+                      "w-20 h-20 bg-white rounded-full border-4 border-white/50 flex items-center justify-center transition-all shadow-2xl relative",
+                      isRecording ? "scale-125 border-red-500/50" : "active:scale-90"
+                    )}
+                  >
+                    <div className={cn(
+                      "transition-all",
+                      isRecording ? "w-8 h-8 bg-red-500 rounded-lg" : "w-16 h-16 bg-white border-2 border-slate-900/10 rounded-full"
+                    )} />
+                  </button>
+
+                  <div className="p-10" /> {/* Spacer */}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
