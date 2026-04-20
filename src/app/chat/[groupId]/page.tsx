@@ -90,6 +90,10 @@ export default function Chat() {
     endTime: number;
   } | null>(null);
 
+  const [activeTool, setActiveTool] = useState<'brush' | 'text' | 'none'>('none');
+  const [brushColor, setBrushColor] = useState('#10b981'); // Emerald-500
+  const [imageTexts, setImageTexts] = useState<{ id: string; text: string; x: number; y: number }[]>([]);
+
   // Click outside to close emoji picker
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -992,6 +996,8 @@ export default function Chat() {
 
   const startAudioRecording = async (e: React.MouseEvent | React.TouchEvent) => {
     try {
+      if (isRecordingAudio) return;
+      
       const startX = 'clientX' in e ? e.clientX : e.touches[0].clientX;
       const startY = 'clientY' in e ? e.clientY : e.touches[0].clientY;
       setAudioStartX(startX);
@@ -1001,23 +1007,40 @@ export default function Chat() {
       setIsAudioLocked(false);
       setIsAudioCancelled(false);
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        } 
+      });
+
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+        ? 'audio/webm;codecs=opus' 
+        : 'audio/webm';
+
+      const recorder = new MediaRecorder(stream, { 
+        mimeType,
+        audioBitsPerSecond: 128000 
+      });
       audioRecorderRef.current = recorder;
       audioChunksRef.current = [];
 
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
       };
 
       recorder.onstop = async () => {
+        // Ensure we stop tracks properly
         stream.getTracks().forEach(track => track.stop());
+        
         if (!isAudioCancelled && audioChunksRef.current.length > 0) {
           const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
           const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
-          
-          // Redirect to Preview & Edit for Voice too
           const previewUrl = URL.createObjectURL(blob);
+          
           setPendingMedia({
             file,
             previewUrl,
@@ -1029,9 +1052,17 @@ export default function Chat() {
             endTime: 0
           });
         }
+        
+        // Reset states AFTER capture
+        setIsRecordingAudio(false);
+        setIsAudioLocked(false);
+        setAudioTime(0);
+        setAudioDragX(0);
+        setAudioDragY(0);
+        if (audioIntervalRef.current) clearInterval(audioIntervalRef.current);
       };
 
-      recorder.start();
+      recorder.start(200); // Collect data every 200ms to ensure it's not empty
       setIsRecordingAudio(true);
       setAudioTime(0);
       audioIntervalRef.current = setInterval(() => {
@@ -1042,6 +1073,7 @@ export default function Chat() {
       toast.error("Could not access microphone.");
     }
   };
+
   const [forwardMsg, setForwardMsg] = useState<Message | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
@@ -2095,12 +2127,12 @@ export default function Chat() {
                   <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
                   <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                 </div>
+                <span className="text-[10px] text-slate-400 font-medium">{typingUsers.join(', ')} is typing...</span>
               </motion.div>
             )}
           </AnimatePresence>
-
-          <div ref={scrollRef} key="scroll-marker" />
         </div>
+        <div ref={scrollRef} key="scroll-marker" />
       </div>
 
       {/* Input Area */}
@@ -2716,9 +2748,13 @@ export default function Chat() {
             className="fixed inset-0 z-[300] bg-black flex flex-col"
           >
             {/* Header Toolbar */}
-            <div className="p-4 flex justify-between items-center bg-gradient-to-b from-black/60 to-transparent">
+            <div className="p-4 flex justify-between items-center bg-gradient-to-b from-black/80 to-transparent">
               <button 
-                onClick={() => setPendingMedia(null)}
+                onClick={() => {
+                  setPendingMedia(null);
+                  setActiveTool('none');
+                  setImageTexts([]);
+                }}
                 className="p-2 text-white hover:bg-white/10 rounded-full transition-colors"
               >
                 <X size={24} />
@@ -2729,14 +2765,44 @@ export default function Chat() {
                   <>
                     <button 
                       onClick={() => setPendingMedia(prev => prev ? { ...prev, rotation: (prev.rotation + 90) % 360 } : null)}
-                      className="p-2 text-white hover:bg-white/10 rounded-full transition-colors"
+                      className={cn(
+                        "p-2 text-white hover:bg-white/10 rounded-full transition-all active:scale-90"
+                      )}
                     >
                       <RotateCcw size={24} />
                     </button>
-                    <button className="p-2 text-white hover:bg-white/10 rounded-full transition-colors">
+                    <div className="flex items-center gap-2 border-x border-white/10 px-4">
+                      {['#10b981', '#ef4444', '#3b82f6', '#f59e0b', '#ffffff'].map(color => (
+                        <button
+                          key={color}
+                          onClick={() => {
+                            setBrushColor(color);
+                            setActiveTool('brush');
+                          }}
+                          className={cn(
+                            "w-6 h-6 rounded-full border-2 transition-transform active:scale-90",
+                            brushColor === color ? "border-white scale-125" : "border-transparent"
+                          )}
+                          style={{ backgroundColor: color }}
+                        />
+                      ))}
+                    </div>
+                    <button 
+                      onClick={() => setActiveTool(activeTool === 'brush' ? 'none' : 'brush')}
+                      className={cn(
+                        "p-2 rounded-full transition-all",
+                        activeTool === 'brush' ? "bg-emerald-500 text-white" : "text-white hover:bg-white/10"
+                      )}
+                    >
                       <Pencil size={24} />
                     </button>
-                    <button className="p-2 text-white hover:bg-white/10 rounded-full transition-colors font-bold text-xl">
+                    <button 
+                      onClick={() => setActiveTool(activeTool === 'text' ? 'none' : 'text')}
+                      className={cn(
+                        "p-2 rounded-full transition-all font-bold text-xl w-10 h-10 flex items-center justify-center",
+                        activeTool === 'text' ? "bg-emerald-500 text-white" : "text-white hover:bg-white/10"
+                      )}
+                    >
                       T
                     </button>
                   </>
@@ -2766,14 +2832,19 @@ export default function Chat() {
                   {/* Drawing Canvas Overlay */}
                   <canvas
                     id="doodle-canvas"
-                    className="absolute inset-0 w-full h-full cursor-crosshair touch-none"
+                    className={cn(
+                      "absolute inset-0 w-full h-full touch-none",
+                      activeTool === 'brush' ? "cursor-crosshair" : "pointer-events-none"
+                    )}
                     onPointerDown={(e) => {
+                      if (activeTool !== 'brush') return;
                       const canvas = e.currentTarget;
                       const ctx = canvas.getContext('2d');
                       if (ctx) {
-                        ctx.strokeStyle = '#10b981'; // Emerald-500
-                        ctx.lineWidth = 4;
+                        ctx.strokeStyle = brushColor;
+                        ctx.lineWidth = 6;
                         ctx.lineCap = 'round';
+                        ctx.lineJoin = 'round';
                         ctx.beginPath();
                         const rect = canvas.getBoundingClientRect();
                         ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
@@ -2793,9 +2864,36 @@ export default function Chat() {
                     onPointerUp={(e) => {
                       (e.currentTarget as any).isDrawing = false;
                     }}
-                    width={800} // Default internal resolution
+                    onPointerLeave={(e) => {
+                      (e.currentTarget as any).isDrawing = false;
+                    }}
+                    width={800} 
                     height={1200}
                   />
+
+                  {/* Text Overlays */}
+                  {imageTexts.map(item => (
+                    <div 
+                      key={item.id}
+                      style={{ left: item.x, top: item.y }}
+                      className="absolute text-white font-bold text-2xl drop-shadow-lg pointer-events-auto cursor-move bg-black/20 px-2 py-1 rounded"
+                    >
+                      {item.text}
+                    </div>
+                  ))}
+
+                  {activeTool === 'text' && (
+                    <div className="absolute inset-0 z-10" onClick={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const x = e.clientX - rect.left;
+                      const y = e.clientY - rect.top;
+                      const text = prompt("Enter text:");
+                      if (text) {
+                        setImageTexts([...imageTexts, { id: Math.random().toString(), text, x, y }]);
+                        setActiveTool('none');
+                      }
+                    }} />
+                  )}
                 </div>
               ) : pendingMedia.type === 'video' ? (
                 <div className="relative w-full max-w-4xl flex flex-col gap-4">
