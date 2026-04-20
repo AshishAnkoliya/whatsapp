@@ -86,6 +86,7 @@ export default function Chat() {
     caption: string;
     rotation: number;
     isMuted: boolean;
+    isRoundCrop: boolean;
     startTime: number;
     endTime: number;
   } | null>(null);
@@ -1036,7 +1037,8 @@ export default function Chat() {
         // Ensure we stop tracks properly
         stream.getTracks().forEach(track => track.stop());
         
-        if (!isAudioCancelled && audioChunksRef.current.length > 0) {
+        // WhatsApp Style: If shorter than 0.5s, it's usually an accidental tap
+        if (!isAudioCancelled && audioChunksRef.current.length > 0 && audioTime >= 1) {
           const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
           const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
           const previewUrl = URL.createObjectURL(blob);
@@ -1048,6 +1050,7 @@ export default function Chat() {
             caption: '',
             rotation: 0,
             isMuted: false,
+            isRoundCrop: false,
             startTime: 0,
             endTime: 0
           });
@@ -1098,6 +1101,7 @@ export default function Chat() {
       caption: '',
       rotation: 0,
       isMuted: false,
+      isRoundCrop: false,
       startTime: 0,
       endTime: 0
     });
@@ -1107,17 +1111,85 @@ export default function Chat() {
     if (!pendingMedia || !currentUser || !groupId) return;
     
     setIsUploading(true);
-    const { file, type, caption } = pendingMedia;
+    const { file, type, caption, rotation, isRoundCrop } = pendingMedia;
     
     try {
+      let finalFile = file;
+
+      // Handle Image Flattening (Doodles, Text, Mask)
+      if (type === 'image') {
+        const img = new Image();
+        img.src = pendingMedia.previewUrl;
+        await new Promise((resolve) => (img.onload = resolve));
+
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        if (ctx) {
+          // Adjust for rotation
+          const is90 = rotation === 90 || rotation === 270;
+          canvas.width = is90 ? img.naturalHeight : img.naturalWidth;
+          canvas.height = is90 ? img.naturalWidth : img.naturalHeight;
+
+          // Apply rotation
+          ctx.translate(canvas.width / 2, canvas.height / 2);
+          ctx.rotate((rotation * Math.PI) / 180);
+          ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+          ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset for doodles/text
+
+          // Flatten Doodle Canvas
+          const doodleCanvas = document.getElementById('doodle-canvas') as HTMLCanvasElement;
+          if (doodleCanvas) {
+            // Need to handle the fact that doodleCanvas might be 800x1200 or similar
+            ctx.drawImage(doodleCanvas, 0, 0, canvas.width, canvas.height);
+          }
+
+          // Flatten Text
+          imageTexts.forEach(item => {
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 48px Arial';
+            ctx.shadowBlur = 4;
+            ctx.shadowColor = 'black';
+            // Map text coordinates from preview UI to natural resolution
+            const previewImg = document.querySelector('.pending-media-img') as HTMLImageElement;
+            if (previewImg) {
+              const ratioX = canvas.width / previewImg.clientWidth;
+              const ratioY = canvas.height / previewImg.clientHeight;
+              ctx.fillText(item.text, item.x * ratioX, item.y * ratioY);
+            }
+          });
+
+          // Handle Circular Transformation
+          if (isRoundCrop) {
+            const size = Math.min(canvas.width, canvas.height);
+            const squareCanvas = document.createElement('canvas');
+            squareCanvas.width = size;
+            squareCanvas.height = size;
+            const sqCtx = squareCanvas.getContext('2d');
+            if (sqCtx) {
+              sqCtx.beginPath();
+              sqCtx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+              sqCtx.clip();
+              sqCtx.drawImage(canvas, (canvas.width - size) / -2, (canvas.height - size) / -2);
+              
+              const blob = await new Promise<Blob>((res) => squareCanvas.toBlob(b => res(b!), 'image/png'));
+              finalFile = new File([blob], `round_${file.name.replace(/\.[^/.]+$/, "")}.png`, { type: 'image/png' });
+            }
+          } else {
+            const blob = await new Promise<Blob>((res) => canvas.toBlob(b => res(b!), 'image/jpeg', 0.9));
+            finalFile = new File([blob], file.name, { type: 'image/jpeg' });
+          }
+        }
+      }
+
       const fileId = Math.random().toString(36).substring(7);
-      const fileExt = file.name.split('.').pop() || (type === 'audio' ? 'webm' : 'jpg');
+      const fileExt = finalFile.name.split('.').pop();
       const fileName = `${fileId}.${fileExt}`;
       const filePath = `${groupId}/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('chat-media')
-        .upload(filePath, file);
+        .upload(filePath, finalFile);
 
       if (uploadError) throw uploadError;
 
@@ -1130,7 +1202,7 @@ export default function Chat() {
         .insert({
           group_id: groupId,
           sender_id: currentUser.id,
-          content: caption || file.name,
+          content: caption || '',
           type: type === 'audio' ? 'audio' : (type === 'video' ? 'video' : 'image'),
           file_url: publicUrl
         });
@@ -1143,6 +1215,7 @@ export default function Chat() {
       );
 
       setPendingMedia(null);
+      setImageTexts([]); // Clear text
     } catch (error: any) {
       toast.error(`Upload failed: ${error.message}`);
     } finally {
@@ -2205,10 +2278,19 @@ export default function Chat() {
                 <motion.div 
                   initial={{ scale: 0.8 }}
                   animate={{ scale: 1 }}
-                  className="text-xs text-emerald-700 font-bold flex items-center gap-2"
+                  className="flex-1 flex justify-between items-center ml-4"
                 >
-                  <div className="w-2 h-2 bg-emerald-500 rounded-full animate-ping" />
-                  Locked Recording...
+                  <button 
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); stopAudioRecording(true); }}
+                    className="p-2 bg-red-100 text-red-500 rounded-full hover:bg-red-200 transition-colors"
+                  >
+                    <Trash2 size={20} />
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-ping" />
+                    <span className="text-xs font-bold text-emerald-700">Recording...</span>
+                  </div>
                 </motion.div>
               )}
             </div>
@@ -2332,11 +2414,15 @@ export default function Chat() {
                 size="icon"
                 className={cn(
                   "bg-emerald-500 hover:bg-emerald-600 text-white rounded-full w-12 h-12 shadow-lg shadow-emerald-200 transition-all touch-none select-none",
-                  isRecordingAudio && "scale-150 ring-8 ring-emerald-500/20",
+                  isRecordingAudio && "scale-110 ring-8 ring-emerald-500/20",
                   isProcessingAction && "opacity-50 pointer-events-none"
                 )}
               >
-                {isAudioLocked ? <X size={20} /> : <Mic size={20} className={isRecordingAudio ? "animate-pulse" : ""} />}
+                {isRecordingAudio && isAudioLocked ? (
+                  <Send size={24} className="animate-in fade-in zoom-in duration-300" />
+                ) : (
+                  <Mic size={24} className={isRecordingAudio ? "animate-pulse" : ""} />
+                )}
               </Button>
             )}
           </motion.div>
@@ -2764,6 +2850,16 @@ export default function Chat() {
                 {pendingMedia.type === 'image' && (
                   <>
                     <button 
+                      onClick={() => setPendingMedia(prev => prev ? { ...prev, isRoundCrop: !prev.isRoundCrop } : null)}
+                      className={cn(
+                        "p-2 rounded-full transition-all",
+                        pendingMedia.isRoundCrop ? "bg-emerald-500 text-white" : "text-white hover:bg-white/10"
+                      )}
+                      title="Circular Crop"
+                    >
+                      <Star size={24} className={pendingMedia.isRoundCrop ? "fill-current" : ""} />
+                    </button>
+                    <button 
                       onClick={() => setPendingMedia(prev => prev ? { ...prev, rotation: (prev.rotation + 90) % 360 } : null)}
                       className={cn(
                         "p-2 text-white hover:bg-white/10 rounded-full transition-all active:scale-90"
@@ -2827,27 +2923,33 @@ export default function Chat() {
                 >
                   <img 
                     src={pendingMedia.previewUrl} 
-                    className="max-w-full max-h-[70vh] rounded-lg shadow-2xl object-contain pointer-events-none"
+                    className="max-w-full max-h-[70vh] rounded-lg shadow-2xl object-contain pointer-events-none pending-media-img"
                   />
                   {/* Drawing Canvas Overlay */}
                   <canvas
                     id="doodle-canvas"
                     className={cn(
                       "absolute inset-0 w-full h-full touch-none",
-                      activeTool === 'brush' ? "cursor-crosshair" : "pointer-events-none"
+                      activeTool === 'brush' ? "cursor-crosshair z-20" : "pointer-events-none"
                     )}
                     onPointerDown={(e) => {
                       if (activeTool !== 'brush') return;
                       const canvas = e.currentTarget;
                       const ctx = canvas.getContext('2d');
                       if (ctx) {
+                        const rect = canvas.getBoundingClientRect();
+                        const scaleX = canvas.width / rect.width;
+                        const scaleY = canvas.height / rect.height;
+                        
                         ctx.strokeStyle = brushColor;
-                        ctx.lineWidth = 6;
+                        ctx.lineWidth = 6 * scaleX; // Adjust thickness based on scale
                         ctx.lineCap = 'round';
                         ctx.lineJoin = 'round';
                         ctx.beginPath();
-                        const rect = canvas.getBoundingClientRect();
-                        ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+                        
+                        const x = (e.clientX - rect.left) * scaleX;
+                        const y = (e.clientY - rect.top) * scaleY;
+                        ctx.moveTo(x, y);
                         (canvas as any).isDrawing = true;
                       }
                     }}
@@ -2857,7 +2959,11 @@ export default function Chat() {
                       const ctx = canvas.getContext('2d');
                       if (ctx) {
                         const rect = canvas.getBoundingClientRect();
-                        ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+                        const scaleX = canvas.width / rect.width;
+                        const scaleY = canvas.height / rect.height;
+                        const x = (e.clientX - rect.left) * scaleX;
+                        const y = (e.clientY - rect.top) * scaleY;
+                        ctx.lineTo(x, y);
                         ctx.stroke();
                       }
                     }}
@@ -2870,6 +2976,22 @@ export default function Chat() {
                     width={800} 
                     height={1200}
                   />
+
+                  {/* Circular Mask Overlay */}
+                  {pendingMedia.isRoundCrop && (
+                    <div className="absolute inset-0 z-10 pointer-events-none">
+                      <svg viewBox="0 0 100 100" className="w-full h-full">
+                        <defs>
+                          <mask id="round-mask">
+                            <rect width="100" height="100" fill="white" />
+                            <circle cx="50" cy="50" r="48" fill="black" />
+                          </mask>
+                        </defs>
+                        <rect width="100" height="100" fill="rgba(0,0,0,0.5)" mask="url(#round-mask)" />
+                        <circle cx="50" cy="50" r="48" fill="none" stroke="white" strokeWidth="0.5" strokeDasharray="2 2" />
+                      </svg>
+                    </div>
+                  )}
 
                   {/* Text Overlays */}
                   {imageTexts.map(item => (
