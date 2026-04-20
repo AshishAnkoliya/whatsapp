@@ -1016,10 +1016,7 @@ export default function Chat() {
     if (audioRecorderRef.current && isRecordingAudio) {
       setIsAudioCancelled(cancel);
       audioRecorderRef.current.stop();
-      setIsRecordingAudio(false);
-      setAudioTime(0);
-      setAudioDragX(0);
-      setAudioDragY(0);
+      // Only stop the interval here, leave other states for onstop
       if (audioIntervalRef.current) clearInterval(audioIntervalRef.current);
     }
   };
@@ -1068,46 +1065,42 @@ export default function Chat() {
         // Ensure we stop tracks properly
         stream.getTracks().forEach(track => track.stop());
         
-        // WhatsApp Style: If shorter than 0.5s, it's usually an accidental tap
-        if (!isAudioCancelled && audioChunksRef.current.length > 0 && audioTime >= 1) {
+        // Use chunks presence instead of unreliable timer for short recordings
+        if (!isAudioCancelled && audioChunksRef.current.length > 0) {
           const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-          const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
-          const previewUrl = URL.createObjectURL(blob);
-          
-          const mediaObj = {
-            file,
-            previewUrl,
-            type: 'audio' as const,
-            caption: '',
-            rotation: 0,
-            isMuted: false,
-            isRoundCrop: false,
-            startTime: 0,
-            endTime: 0
-          };
+          // Minimum size check (e.g. 5KB) to avoid empty bubbles if somehow data is corrupt
+          if (blob.size > 1000) {
+             const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
+             const previewUrl = URL.createObjectURL(blob);
+             
+             const mediaObj = {
+               file,
+               previewUrl,
+               type: 'audio' as const,
+               caption: '',
+               rotation: 0,
+               isMuted: false,
+               isRoundCrop: false,
+               startTime: 0,
+               endTime: 0
+             };
 
-          setPendingMedia(mediaObj);
+             setPendingMedia(mediaObj);
+             setDrawingHistory([]);
+             setHistoryIndex(-1);
 
-          // Reset drawing history for new media
-          setDrawingHistory([]);
-          setHistoryIndex(-1);
-
-          // AUTO-DISPATCH logic for Locked Send
-          if ((recorder as any).autoDispatch) {
-             // We need to call finalDispatchMedia but it relies on pendingMedia state update which is async
-             // So we'll use a local helper or handle it in a useEffect, but for now let's use a small timeout or direct call with object
-             // Actually better: finalDispatchMedia can take an optional media override
-             handleImmediateDispatch(mediaObj);
+             if ((recorder as any).autoDispatch) {
+               handleImmediateDispatch(mediaObj);
+             }
           }
         }
         
-        // Reset states AFTER capture
+        // Reset ALL states ONLY after processing is done
         setIsRecordingAudio(false);
         setIsAudioLocked(false);
         setAudioTime(0);
         setAudioDragX(0);
         setAudioDragY(0);
-        if (audioIntervalRef.current) clearInterval(audioIntervalRef.current);
       };
 
       recorder.start(200); // Collect data every 200ms to ensure it's not empty
@@ -1164,13 +1157,22 @@ export default function Chat() {
       const { error: uploadError } = await supabase.storage.from('chat-media').upload(filePath, media.file);
       if (uploadError) throw uploadError;
       const { data: { publicUrl } } = supabase.storage.from('chat-media').getPublicUrl(filePath);
-      await supabase.from('messages').insert({
+      
+      const { error: msgError } = await supabase.from('messages').insert({
         group_id: groupId,
         sender_id: currentUser.id,
         content: '',
         type: 'audio',
         file_url: publicUrl
       });
+
+      if (msgError) throw msgError;
+
+      triggerPushNotification(
+        `${currentUser.username || 'Someone'} (${group?.name})`,
+        `Shared a voice message`
+      );
+
       setPendingMedia(null);
     } catch (e: any) {
       toast.error(e.message);
@@ -2427,6 +2429,9 @@ export default function Chat() {
                     className="text-slate-400 hover:text-emerald-500 rounded-full"
                     onClick={() => {
                       setPendingMedia(null);
+                      setImageTexts([]);
+                      setDrawingHistory([]);
+                      setHistoryIndex(-1);
                       setIsCameraOpen(true);
                     }}
                   >
