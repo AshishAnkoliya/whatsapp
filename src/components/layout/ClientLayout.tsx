@@ -8,6 +8,8 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUser } from '@/lib/auth';
 import Auth from '@/app/auth/page';
+import Onboarding from './Onboarding';
+
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -76,7 +78,9 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         {children}
       </div>
       {!isChatPage && <BottomNav />}
+      {session?.user?.id && <Onboarding userId={session.user.id} />}
       <Toaster position="top-center" />
+
     </>
   );
 }

@@ -12,6 +12,8 @@ import { Label } from '@/components/ui/label';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUser } from '@/lib/auth';
 import { toast } from 'sonner';
+import { subscribeToPush, checkPushSubscription } from '@/lib/push';
+
 
 export default function Settings() {
   const [user, setUser] = useState<any>(null);
@@ -153,10 +155,15 @@ export default function Settings() {
   const handleSendTestNotification = async () => {
     try {
       const registration = await navigator.serviceWorker.ready;
-      const subscription = await registration.pushManager.getSubscription();
+      let subscription = await registration.pushManager.getSubscription();
+
+      if (!subscription && user) {
+        toast.loading('Enabling notifications first...', { id: 'test-push' });
+        subscription = await subscribeToPush(user.id);
+      }
 
       if (!subscription) {
-        toast.error('No push subscription found. Please enable notifications first.');
+        toast.error('Could not enable notifications. Please check your browser settings.');
         return;
       }
 
@@ -183,6 +190,7 @@ export default function Settings() {
       toast.error(`Error: ${error.message}`, { id: 'test-push' });
     }
   };
+
 
   const handleItemClick = (label: string) => {
     if (label === 'Push Verification') {

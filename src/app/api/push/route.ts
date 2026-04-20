@@ -94,15 +94,28 @@ export async function POST(request: Request) {
     });
 
     const results = await Promise.allSettled(
-      subscriptions.map(sub => 
-        webpush.sendNotification({
-          endpoint: sub.endpoint,
-          keys: {
-            p256dh: sub.p256dh,
-            auth: sub.auth
+      subscriptions.map(async (sub) => {
+        try {
+          await webpush.sendNotification({
+            endpoint: sub.endpoint,
+            keys: {
+              p256dh: sub.p256dh,
+              auth: sub.auth
+            }
+          }, pushPayload);
+          return { success: true, endpoint: sub.endpoint };
+        } catch (error: any) {
+          // If subscription is expired or invalid, remove it
+          if (error.statusCode === 410 || error.statusCode === 404) {
+            console.log(`🗑️ Removing stale subscription: ${sub.endpoint.substring(0, 40)}...`);
+            await supabaseServer
+              .from('push_subscriptions')
+              .delete()
+              .eq('endpoint', sub.endpoint);
           }
-        }, pushPayload)
-      )
+          throw error;
+        }
+      })
     );
 
     const successCount = results.filter(r => r.status === 'fulfilled').length;

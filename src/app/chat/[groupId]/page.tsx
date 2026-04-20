@@ -18,6 +18,8 @@ import { getCurrentUser } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import { subscribeToPush } from '@/lib/push';
+
 
 // Fallback for crypto.randomUUID which is only available in secure contexts (HTTPS/localhost)
 const generateUUID = () => {
@@ -62,84 +64,23 @@ export default function Chat() {
     }
   }
 
-  function urlBase64ToUint8Array(base64String: string) {
-    const padding = '='.repeat((4 - base64String.length % 4) % 4);
-    const base64 = (base64String + padding)
-      .replace(/-/g, '+')
-      .replace(/_/g, '/');
 
-    const rawData = window.atob(base64);
-    const outputArray = new Uint8Array(rawData.length);
-
-    for (let i = 0; i < rawData.length; ++i) {
-      outputArray[i] = rawData.charCodeAt(i);
-    }
-    return outputArray;
-  }
-
-  async function subscribeToPush() {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-      toast.error('Push notifications are not supported on this browser.');
-      return;
-    }
-
+  async function handleSubscribe() {
+    if (!currentUser) return;
     setIsSubscribing(true);
     try {
-      const permission = await Notification.requestPermission();
-      setNotificationPermission(permission);
-      
-      if (permission === 'denied') {
-        toast.error('Notifications are blocked by Chrome. Please click the "Lock" icon in the address bar and set Notifications to "Allow".', {
-          duration: 6000,
-        });
-        return;
-      }
-
-      if (permission !== 'granted') {
-        throw new Error('Permission not granted');
-      }
-
-      const registration = await navigator.serviceWorker.ready;
-      
-      const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-      if (!vapidPublicKey) {
-        throw new Error('VAPID public key not found in environment');
-      }
-
-      const subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
-      });
-
-      // Use toJSON() for maximum compatibility and simplicity
-      const subJson = subscription.toJSON();
-      const p256dh = subJson.keys?.p256dh;
-      const auth = subJson.keys?.auth;
-
-      if (!p256dh || !auth) {
-        throw new Error('Could not extract push subscription keys');
-      }
-
-      console.log('Sending subscription to Supabase...');
-      const { error } = await supabase
-        .from('push_subscriptions')
-        .upsert({
-          user_id: currentUser.id,
-          endpoint: subscription.endpoint,
-          p256dh,
-          auth
-        }, { onConflict: 'user_id, endpoint' });
-
-      if (error) throw error;
-
+      await subscribeToPush(currentUser.id);
+      setNotificationPermission('granted');
       toast.success('Notifications enabled successfully!');
     } catch (error: any) {
-      console.error('Push subscription error:', error);
-      toast.error(error.message || 'Failed to enable notifications');
+      if (error.message !== 'Notification permission denied') {
+        toast.error(error.message || 'Failed to enable notifications');
+      }
     } finally {
       setIsSubscribing(false);
     }
   }
+
 
   useEffect(() => {
     if (!groupId || !currentUser) return;
@@ -1430,7 +1371,7 @@ export default function Chat() {
                       <Search size={20} />
                     </button>
                     <button 
-                      onClick={subscribeToPush} 
+                      onClick={handleSubscribe} 
                       className={cn(
                         "p-1 hover:bg-slate-100 rounded-full transition-colors relative group/bell",
                         notificationPermission === 'granted' ? "text-emerald-500" : "text-slate-400"
