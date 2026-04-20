@@ -41,7 +41,7 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body cz-shortcut-listen="true"
-        data-new-gr-c-s-check-loaded="14.1283.0"
+        data-new-gr-c-s-check-loaded="14.1284.0"
         data-gr-ext-installed="" className="h-full bg-slate-50 text-slate-900 font-sans selection:bg-emerald-100 flex flex-col items-center overflow-hidden overscroll-none">
         <main className="fixed inset-0 w-full max-w-md mx-auto bg-white shadow-xl flex flex-col overflow-hidden">
           <ClientLayout>{children}</ClientLayout>

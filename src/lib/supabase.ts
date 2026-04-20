@@ -32,6 +32,7 @@ export type Group = {
   name: string;
   description: string;
   avatar_url: string;
+  type: 'group' | 'dm';
   created_at: string;
   created_by: string;
   // UI helper fields
@@ -62,6 +63,7 @@ export type Message = {
   read_by?: string[]; // list of user_ids who have read the message
   delivered_to?: string[]; // list of user_ids who have received the message
   is_deleted?: boolean;
+  edited_at?: string;
 };
 
 export type GroupMember = {

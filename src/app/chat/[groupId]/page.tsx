@@ -4,7 +4,8 @@ import * as React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter as useNavigate, useParams } from 'next/navigation';
 
-import { ArrowLeft, Phone, Video, MoreVertical, Send, Paperclip, Smile, Image as ImageIcon, FileText, Mic, Plus, X, UserPlus, Shield, Search, LogOut, Camera, ChevronRight, Trash2, ExternalLink, Star, Bell, BellOff } from 'lucide-react';
+import { ArrowLeft, Phone, Video, MoreVertical, Send, Paperclip, Smile, Image as ImageIcon, FileText, Mic, Plus, X, UserPlus, Shield, Search, LogOut, Camera, ChevronRight, Trash2, ExternalLink, Star, Bell, BellOff, Check, CheckCheck, Pencil } from 'lucide-react';
+
 import { motion, AnimatePresence } from 'motion/react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
@@ -43,6 +44,7 @@ export default function Chat() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [viewingReactionsMsg, setViewingReactionsMsg] = useState<Message | null>(null);
   const [activeReactionTab, setActiveReactionTab] = useState<string>('All');
   const [reactionProfiles, setReactionProfiles] = useState<Record<string, any>>({});
@@ -122,8 +124,12 @@ export default function Chat() {
       }, (payload) => {
         const updatedMessage = payload.new as Message;
         if (updatedMessage.is_deleted) {
-          // Remove from local state if soft deleted
           setMessages(prev => prev.filter(m => m.id !== updatedMessage.id));
+        } else {
+          // Update message in local state (e.g. read_by or delivered_to changed)
+          setMessages(prev => prev.map(m => 
+            m.id === updatedMessage.id ? { ...m, ...updatedMessage } : m
+          ));
         }
       })
       .on('broadcast', { event: 'new_message' }, ({ payload }) => {
@@ -216,14 +222,21 @@ export default function Chat() {
 
     try {
       for (const msg of unreadMessages) {
-        const newReadBy = [...(msg.read_by || []), currentUser.id];
-        await supabase
+        // Ensure we handle it as a clean array for JSONB
+        const currentReadBy = Array.isArray(msg.read_by) ? msg.read_by : [];
+        const newReadBy = Array.from(new Set([...currentReadBy, currentUser.id]));
+        
+        const { error } = await supabase
           .from('messages')
           .update({ read_by: newReadBy })
           .eq('id', msg.id);
+        
+        if (error) {
+          console.error(`Failed to mark msg ${msg.id} as read:`, error.message, error.details);
+        }
       }
     } catch (error) {
-      console.error('Error marking messages as read:', error);
+      console.error('Error in markMessagesAsRead:', error);
     }
   }
 
@@ -253,16 +266,31 @@ export default function Chat() {
         .select('*')
         .eq('id', groupId)
         .single();
-      setGroup(groupData);
-      setEditGroupName(groupData?.name || '');
-      setEditGroupDesc(groupData?.description || '');
-
+      
       // Fetch Group Members
       const { data: membersData } = await supabase
         .from('group_members')
         .select('*, profiles(*)')
         .eq('group_id', groupId);
-      setMembers(membersData || []);
+      const currentMembers = membersData || [];
+      setMembers(currentMembers);
+
+      // Resolve DM identity if needed
+      let displayGroup = groupData;
+      if (groupData?.type === 'dm') {
+        const otherMember = currentMembers.find(m => m.user_id !== user.id);
+        if (otherMember?.profiles) {
+          displayGroup = {
+            ...groupData,
+            name: (otherMember.profiles as any).username,
+            avatar_url: (otherMember.profiles as any).avatar_url
+          };
+        }
+      }
+
+      setGroup(displayGroup);
+      setEditGroupName(displayGroup?.name || '');
+      setEditGroupDesc(displayGroup?.description || '');
 
       // Check if current user is admin
       const currentMember = membersData?.find(m => m.user_id === user.id);
@@ -302,6 +330,11 @@ export default function Chat() {
     e?.preventDefault();
     if (!newMessage.trim() || !currentUser || !groupId) return;
 
+    if (editingMessage) {
+      await handleUpdateMessage(editingMessage.id, newMessage);
+      return;
+    }
+
     const messageContent = newMessage.trim();
     const replyData = replyingTo;
     setNewMessage('');
@@ -316,7 +349,7 @@ export default function Chat() {
       content: messageContent,
       type: 'text',
       created_at: new Date().toISOString(),
-      sender_name: 'You',
+      sender_name: currentUser.username || 'Someone',
       reply_to: replyData ? {
         sender_name: replyData.sender_name ?? 'Unknown',
         content: replyData.content
@@ -331,7 +364,12 @@ export default function Chat() {
         supabase.channel(`room:${groupId}`).send({
           type: 'broadcast',
           event: 'new_message',
-          payload: { message: optimisticMsg }
+          payload: { 
+            message: {
+              ...optimisticMsg,
+              sender_name: currentUser.username // Send real name to others
+            } 
+          }
         });
       }
 
@@ -344,8 +382,10 @@ export default function Chat() {
           sender_id: currentUser.id,
           content: messageContent,
           type: 'text',
+          sender_name: currentUser.username,
+          sender_avatar: currentUser.avatar_url,
           reply_to: replyData ? {
-            sender_name: replyData.sender_name ?? 'Unknown',
+            sender_name: replyData.sender_id === currentUser.id ? currentUser.username : (replyData.sender_name ?? 'Unknown'),
             content: replyData.content
           } : null
         });
@@ -405,6 +445,38 @@ export default function Chat() {
       toast.success('Message deleted for everyone');
     } catch (error: any) {
       toast.error(error.message);
+    }
+  }
+
+  async function handleUpdateMessage(messageId: string, newContent: string) {
+    if (!newContent.trim() || !currentUser || !groupId) return;
+
+    try {
+      const editedAt = new Date().toISOString();
+      const { error } = await supabase
+        .from('messages')
+        .update({ content: newContent.trim(), edited_at: editedAt })
+        .eq('id', messageId);
+
+      if (error) throw error;
+
+      setMessages(prev => prev.map(m =>
+        m.id === messageId ? { ...m, content: newContent.trim(), edited_at: editedAt } : m
+      ));
+
+      // Broadcast update
+      supabase.channel(`room:${groupId}`).send({
+        type: 'broadcast',
+        event: 'message_updated',
+        payload: { messageId, content: newContent.trim(), edited_at: editedAt }
+      });
+
+      setEditingMessage(null);
+      setNewMessage('');
+      toast.success('Message updated');
+    } catch (error: any) {
+      console.error('Error updating message:', error);
+      toast.error('Failed to update message');
     }
   }
 
@@ -836,35 +908,40 @@ export default function Chat() {
 
     const undeliveredMessages = messages.filter(m =>
       m.sender_id !== currentUser.id &&
-      (!m.delivered_to || !m.delivered_to.includes(currentUser.id))
+      (!m.delivered_to || (Array.isArray(m.delivered_to) && !m.delivered_to.includes(currentUser.id)))
     );
 
     if (undeliveredMessages.length === 0) return;
 
     try {
-      // Collect IDs of messages that need to be marked as delivered to us
       const idsToUpdate = undeliveredMessages.map(m => m.id);
 
-      // In a real app we'd batch this or use a smart RPC. For now, we'll use a trick or sequential.
-      // Better: Update messages where id is in the list
-      // Note: We need to append to the array. Supabase doesn't have a native "append to array" in update without RPC.
-      // For this pro version, let's assume we use a simple update for now or just skip if it's too complex for single query.
-      // But let's try to at least update the local state.
-
+      // Optimistically update local state
       setMessages(prev => prev.map(m => {
         if (idsToUpdate.includes(m.id)) {
-          const deliveredTo = m.delivered_to || [];
-          if (!deliveredTo.includes(currentUser.id)) {
-            return { ...m, delivered_to: [...deliveredTo, currentUser.id] };
-          }
+          const currentDeliveredTo = Array.isArray(m.delivered_to) ? m.delivered_to : [];
+          const deliveredTo = Array.from(new Set([...currentDeliveredTo, currentUser.id]));
+          return { ...m, delivered_to: deliveredTo };
         }
         return m;
       }));
 
-      // We won't do the DB roundtrip for every single message here to save quota, 
-      // but in a production app we would use an RPC call.
+      // Update in DB
+      await Promise.all(undeliveredMessages.map(async (msg) => {
+        const currentDeliveredTo = Array.isArray(msg.delivered_to) ? msg.delivered_to : [];
+        const newDeliveredTo = Array.from(new Set([...currentDeliveredTo, currentUser.id]));
+        
+        const { error } = await supabase
+          .from('messages')
+          .update({ delivered_to: newDeliveredTo })
+          .eq('id', msg.id);
+          
+        if (error) {
+          console.error(`Failed to mark msg ${msg.id} as delivered:`, error.message, error.details);
+        }
+      }));
     } catch (error) {
-      console.error('Error marking as delivered:', error);
+      console.error('Error in markMessagesAsDelivered:', error);
     }
   }
 
@@ -1084,9 +1161,32 @@ export default function Chat() {
                 <Star size={20} fill={starredMessageIds.includes(selectedMessageId || '') ? "currentColor" : "none"} />
               </button>
               {messages.find(m => m.id === selectedMessageId)?.sender_id === currentUser?.id && (
-                <button onClick={() => { deleteMessage(selectedMessageId); setSelectedMessageId(null); }} className="p-2 hover:bg-emerald-700 rounded-full transition-colors" title="Delete">
-                  <Trash2 size={20} />
-                </button>
+                <div className="flex items-center">
+                  {(() => {
+                    const msg = messages.find(m => m.id === selectedMessageId);
+                    if (!msg) return null;
+                    const diffMinutes = (new Date().getTime() - new Date(msg.created_at).getTime()) / (1000 * 60);
+                    if (diffMinutes < 15 && msg.type === 'text') {
+                      return (
+                        <button 
+                          onClick={() => {
+                            setEditingMessage(msg);
+                            setNewMessage(msg.content);
+                            setSelectedMessageId(null);
+                          }} 
+                          className="p-2 hover:bg-emerald-700 rounded-full transition-colors" 
+                          title="Edit"
+                        >
+                          <Pencil size={20} />
+                        </button>
+                      );
+                    }
+                    return null;
+                  })()}
+                  <button onClick={() => { deleteMessage(selectedMessageId); setSelectedMessageId(null); }} className="p-2 hover:bg-emerald-700 rounded-full transition-colors" title="Delete">
+                    <Trash2 size={20} />
+                  </button>
+                </div>
               )}
               <button
                 onClick={() => {
@@ -1442,7 +1542,9 @@ export default function Chat() {
           <AnimatePresence initial={false}>
             {filteredMessages.map((msg, index) => {
               const isMe = msg.sender_id === currentUser?.id;
-              const showAvatar = index === 0 || filteredMessages[index - 1].sender_id !== msg.sender_id;
+              const isNewSender = index === 0 || filteredMessages[index - 1].sender_id !== msg.sender_id;
+              const showAvatar = isNewSender && !isMe;
+              const showName = isNewSender;
 
               const isSystemMessage = msg.type === 'system' || msg.content?.startsWith('[SYSTEM]:');
               
@@ -1467,10 +1569,11 @@ export default function Chat() {
               return (
                 <motion.div
                   key={msg.id}
-                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  initial={{ opacity: 0, y: 10, scale: 0.95, x: 0 }}
+                  animate={{ opacity: 1, y: 0, scale: 1, x: 0 }}
                   drag="x"
                   dragConstraints={{ left: 0, right: 100 }}
+                  dragSnapToOrigin={true}
                   dragElastic={0.2}
                   onDragEnd={(_, info) => {
                     if (info.offset.x > 50) {
@@ -1479,7 +1582,8 @@ export default function Chat() {
                   }}
                   className={cn(
                     "flex items-end gap-2 max-w-[85%] relative",
-                    isMe ? "ml-auto flex-row-reverse" : "mr-auto"
+                    isMe ? "ml-auto flex-row-reverse" : "mr-auto",
+                    group?.type === 'dm' && "gap-0" // No avatar gap in DM
                   )}
                 >
                   {/* Reply Indicator Background */}
@@ -1489,13 +1593,14 @@ export default function Chat() {
                     </div>
                   </div>
 
-                  {!isMe && (
+                  {/* Avatar rendering for others (Groups ONLY) */}
+                  {!isMe && group?.type === 'group' && (
                     <div className="w-8 h-8 flex-shrink-0">
                       {showAvatar && (
-                        <Avatar className="w-8 h-8">
+                        <Avatar className="w-8 h-8 ring-2 ring-white shadow-sm">
                           <AvatarImage src={msg.sender_avatar} />
-                          <AvatarFallback className="bg-slate-200 text-[10px]">
-                            {msg.sender_name?.substring(0, 2).toUpperCase()}
+                          <AvatarFallback className="bg-slate-200 text-[10px] font-bold">
+                            {msg.sender_name?.substring(0, 2).toUpperCase() || 'M'}
                           </AvatarFallback>
                         </Avatar>
                       )}
@@ -1518,14 +1623,16 @@ export default function Chat() {
                       className={cn(
                         "relative px-4 py-2 rounded-2xl shadow-sm text-sm transition-all text-left outline-none",
                         isMe
-                          ? "bg-emerald-500 text-white rounded-br-none"
-                          : "bg-white text-slate-800 rounded-bl-none",
-                        selectedMessageId === msg.id && "ring-4 ring-emerald-500/30 scale-[0.98]"
+                          ? "bg-[#E1EFFF] text-slate-900 rounded-br-none shadow-sm border border-blue-100/50"
+                          : "bg-white text-slate-800 rounded-bl-none border border-slate-100",
+                        selectedMessageId === msg.id && "ring-4 ring-emerald-500/30 scale-[0.98]",
+                        !isNewSender && (isMe ? "mt-0.5" : "mt-0.5") // Tighter spacing for same-sender blocks
                       )}
                     >
-                      {!isMe && showAvatar && (
-                        <p className="text-[10px] font-bold text-emerald-600 mb-1 uppercase tracking-tight">
-                          {msg.sender_name}
+                      {/* Show Name for Others (Groups ONLY) */}
+                      {showName && !isMe && group?.type === 'group' && (
+                        <p className="text-[10px] font-bold text-emerald-500 mb-1 uppercase tracking-tight">
+                          {msg.sender_name || 'Member'}
                         </p>
                       )}
 
@@ -1580,26 +1687,24 @@ export default function Chat() {
                       </p>
                       <div className={cn(
                         "text-[9px] mt-1 flex justify-end items-center gap-1",
-                        isMe ? "text-emerald-100" : "text-slate-400"
+                        isMe ? "text-slate-500" : "text-slate-400"
                       )}>
                         {starredMessageIds.includes(msg.id) && <Star size={10} fill="currentColor" className="text-yellow-400 mr-1" />}
                         <span suppressHydrationWarning>{format(new Date(msg.created_at), 'HH:mm')}</span>
-                        {isMe && (
-                          <span className={cn(
-                            "text-[10px] ml-1",
-                            msg.read_by && msg.read_by.length >= (members.length - 1)
-                              ? "text-blue-400"
-                              : "text-emerald-100"
-                          )}>
-                            {msg.read_by && msg.read_by.length >= (members.length - 1) ? (
-                              "✓✓"
-                            ) : msg.delivered_to && msg.delivered_to.length > 0 ? (
-                              "✓✓"
-                            ) : (
-                              "✓"
-                            )}
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1">
+                          {msg.edited_at && <span className="text-[8px] text-slate-400 italic">Edited</span>}
+                          {isMe && (
+                            <div className="flex items-center ml-1">
+                              {msg.read_by && msg.read_by.length >= (members.length - 1) ? (
+                                <CheckCheck size={14} className="text-[#007AFF] drop-shadow-[0_0_4px_rgba(0,122,255,0.2)]" />
+                              ) : msg.delivered_to && (Array.isArray(msg.delivered_to) && msg.delivered_to.length > 0) ? (
+                                <CheckCheck size={14} className="text-slate-500/70" />
+                              ) : (
+                                <Check size={14} className="text-slate-500/70" />
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       {msg.reactions && Object.keys(msg.reactions).length > 0 && (
@@ -1678,9 +1783,10 @@ export default function Chat() {
 
       {/* Input Area */}
       <div className="p-4 bg-white/80 backdrop-blur-xl border-t border-slate-200 z-40 flex-shrink-0">
-        <AnimatePresence>
+        <AnimatePresence mode="wait">
           {replyingTo && (
             <motion.div
+              key="reply-bar"
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
@@ -1692,6 +1798,29 @@ export default function Chat() {
               </div>
               <button onClick={() => setReplyingTo(null)} className="p-1 hover:bg-slate-200 rounded-full">
                 <X size={16} className="text-slate-400" />
+              </button>
+            </motion.div>
+          )}
+          {editingMessage && (
+            <motion.div
+              key="edit-bar"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="mb-2 bg-emerald-50 rounded-2xl p-3 flex items-center gap-3 border-l-4 border-emerald-500"
+            >
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-emerald-600">Editing Message</p>
+                <p className="text-sm text-slate-500 truncate">{editingMessage.content}</p>
+              </div>
+              <button 
+                onClick={() => { 
+                  setEditingMessage(null); 
+                  setNewMessage(''); 
+                }} 
+                className="p-1 hover:bg-emerald-100 rounded-full"
+              >
+                <X size={16} className="text-emerald-400" />
               </button>
             </motion.div>
           )}
@@ -1740,7 +1869,7 @@ export default function Chat() {
                 size="icon"
                 className="bg-emerald-500 hover:bg-emerald-600 text-white rounded-full w-12 h-12 shadow-lg shadow-emerald-200"
               >
-                <Send size={20} />
+                {editingMessage ? <Check className="w-6 h-6" /> : <Send size={20} />}
               </Button>
             ) : (
               <Button

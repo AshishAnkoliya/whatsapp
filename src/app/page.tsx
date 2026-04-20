@@ -4,7 +4,8 @@ import * as React from 'react';
 import { useState, useEffect } from 'react';
 import { useRouter as useNavigate } from 'next/navigation';
 
-import { Search, Plus, MoreVertical, Camera, MessageSquare, X, RefreshCw, Upload } from 'lucide-react';
+import { Search, Plus, MoreVertical, Camera, MessageSquare, X, RefreshCw, Upload, Users, MessageSquarePlus } from 'lucide-react';
+
 import { motion, AnimatePresence } from 'motion/react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
@@ -36,8 +37,13 @@ export default function Home() {
   const [newGroupAvatar, setNewGroupAvatar] = useState<string | null>(null);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [isSearchUsersOpen, setIsSearchUsersOpen] = useState(false);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [foundUsers, setFoundUsers] = useState<any[]>([]);
+  const [isSearchingUsers, setIsSearchingUsers] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+
 
   useEffect(() => {
     fetchGroups();
@@ -80,6 +86,17 @@ export default function Home() {
               const otherGroups = prev.filter(g => g.id !== newMessage.group_id);
               return [updatedGroup, ...otherGroups]; // Move to top
             });
+
+            // Mark as delivered globally if I am the recipient
+            if (newMessage.sender_id !== user.id) {
+              const currentDeliveredTo = Array.isArray(newMessage.delivered_to) ? newMessage.delivered_to : [];
+              if (!currentDeliveredTo.includes(user.id)) {
+                await supabase
+                  .from('messages')
+                  .update({ delivered_to: Array.from(new Set([...currentDeliveredTo, user.id])) })
+                  .eq('id', newMessage.id);
+              }
+            }
           } else if (payload.eventType === 'UPDATE') {
             // Re-calculate unread count for the affected group if readStatus changed
             const updatedMsg = payload.new;
@@ -128,10 +145,26 @@ export default function Home() {
           .or('is_deleted.eq.false,is_deleted.is.null') // Filter out deleted messages
           .not('read_by', 'cs', `{"${user.id}"}`);
 
-        console.log(`Group ${group.name} last message:`, lastMsgData);
+        // For DM chats, resolve the other user's info
+        let dmInfo = { name: group.name, avatar: group.avatar_url };
+        if (group.type === 'dm') {
+          const { data: otherMember } = await supabase
+            .from('group_members')
+            .select('profiles(username, avatar_url)')
+            .eq('group_id', group.id)
+            .neq('user_id', user.id)
+            .single();
+          
+          if (otherMember?.profiles) {
+            dmInfo.name = (otherMember.profiles as any).username;
+            dmInfo.avatar = (otherMember.profiles as any).avatar_url;
+          }
+        }
 
         return {
           ...group,
+          display_name: dmInfo.name,
+          display_avatar: dmInfo.avatar,
           last_message: lastMsgData?.content || null,
           last_message_time: lastMsgData?.created_at || group.created_at,
           last_sender_name: lastMsgData?.sender_id === user.id ? 'You' : senderName,
@@ -141,6 +174,27 @@ export default function Home() {
       }));
 
       setGroups(groupsWithData);
+
+      // Background task: Mark all undelivered messages in these groups as delivered
+      const groupIds = groupsData.map(g => g.id);
+      if (groupIds.length > 0) {
+        const { data: undelivered } = await supabase
+          .from('messages')
+          .select('id, delivered_to')
+          .in('group_id', groupIds)
+          .neq('sender_id', user.id)
+          .not('delivered_to', 'cs', `{"${user.id}"}`);
+
+        if (undelivered && undelivered.length > 0) {
+          await Promise.all(undelivered.map(async (msg) => {
+            const currentDeliveredTo = Array.isArray(msg.delivered_to) ? msg.delivered_to : [];
+            await supabase
+              .from('messages')
+              .update({ delivered_to: Array.from(new Set([...currentDeliveredTo, user.id])) })
+              .eq('id', msg.id);
+          }));
+        }
+      }
     } catch (error) {
       console.error('Error fetching groups:', error);
     } finally {
@@ -259,7 +313,94 @@ export default function Home() {
     }
   }
 
+  async function searchUsers(query: string) {
+    if (!query.trim()) {
+      setFoundUsers([]);
+      return;
+    }
+    
+    setIsSearchingUsers(true);
+    try {
+      const user = await getCurrentUser();
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .ilike('username', `%${query}%`)
+        .neq('id', user?.id)
+        .limit(10);
+      
+      if (error) throw error;
+      setFoundUsers(data || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSearchingUsers(false);
+    }
+  }
+
+  async function handleStartDM(targetUserId: string) {
+    try {
+      const user = await getCurrentUser();
+      if (!user) return;
+
+      // 1. Check if DM already exists
+      const { data: existingDMs, error: dmError } = await supabase
+        .from('groups')
+        .select('*, group_members!inner(user_id)')
+        .eq('type', 'dm')
+        .eq('group_members.user_id', user.id);
+      
+      if (dmError) throw dmError;
+
+      // Filter groups that also have the targetUserId
+      // Note: This is a bit tricky with Supabase basic filters, might need a better query
+      // but for now we'll find it manually or via a separate check
+      let targetGroupId = null;
+
+      for (const dm of (existingDMs || [])) {
+        const { data: members } = await supabase
+          .from('group_members')
+          .select('user_id')
+          .eq('group_id', dm.id);
+        
+        if (members?.some(m => m.user_id === targetUserId)) {
+          targetGroupId = dm.id;
+          break;
+        }
+      }
+
+      if (targetGroupId) {
+        navigate.push(`/chat/${targetGroupId}`);
+      } else {
+        // 2. Create new DM
+        const { data: newGroup, error: createError } = await supabase
+          .from('groups')
+          .insert({
+            name: `DM-${user.id}-${targetUserId}`, // Internal name, UI will resolve display name
+            type: 'dm',
+            created_by: user.id
+          })
+          .select()
+          .single();
+        
+        if (createError) throw createError;
+
+        // Add both users
+        await supabase.from('group_members').insert([
+          { group_id: newGroup.id, user_id: user.id, role: 'member' },
+          { group_id: newGroup.id, user_id: targetUserId, role: 'member' }
+        ]);
+
+        navigate.push(`/chat/${newGroup.id}`);
+      }
+    } catch (err: any) {
+      toast.error('Failed to start chat');
+      console.error(err);
+    }
+  }
+
   const [isRefreshing, setIsRefreshing] = useState(false);
+
 
   async function handleRefresh() {
     if (isRefreshing) return;
@@ -280,8 +421,14 @@ export default function Home() {
         <h1 className="text-2xl font-bold text-emerald-600 tracking-tight">WhatsApp Pro</h1>
         <div className="flex items-center gap-4 text-slate-600">
           <Camera size={22} className="cursor-pointer hover:text-emerald-600 transition-colors" />
+          <MessageSquarePlus 
+            size={22} 
+            className="cursor-pointer hover:text-emerald-600 transition-colors" 
+            onClick={() => setIsSearchUsersOpen(true)}
+          />
           <MoreVertical size={22} className="cursor-pointer hover:text-emerald-600 transition-colors" />
         </div>
+
       </header>
 
       {/* Search Bar */}
@@ -315,41 +462,24 @@ export default function Home() {
               ))
             ) : filteredGroups.length > 0 ? (
               filteredGroups.map((group, index) => (
-                <div key={group.id} className="relative mb-1 overflow-hidden rounded-2xl">
-                  {/* Delete Action Background */}
-                  <div className="absolute inset-0 bg-red-500 flex items-center justify-end px-6">
-                    <div className="flex flex-col items-center text-white">
-                      <X size={20} />
-                      <span className="text-[10px] font-bold">Delete</span>
-                    </div>
-                  </div>
-
-                  <motion.div
-                    drag="x"
-                    dragConstraints={{ left: -100, right: 0 }}
-                    dragElastic={0.1}
-                    onDragEnd={(_, info) => {
-                      if (info.offset.x < -70) {
-                        // Handle delete logic here
-                        toast.info("Delete functionality coming soon!");
-                      }
-                    }}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    transition={{ delay: index * 0.05 }}
-                    onClick={() => navigate.push(`/chat/${group.id}`)}
-                    className="flex items-center gap-4 p-3 bg-white hover:bg-slate-50 cursor-pointer transition-all active:scale-[0.98] relative z-10"
-                  >
+                <motion.div
+                  key={group.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  transition={{ delay: index * 0.05 }}
+                  onClick={() => navigate.push(`/chat/${group.id}`)}
+                  className="flex items-center gap-4 p-3 bg-white hover:bg-slate-50 cursor-pointer transition-all active:scale-[0.98] rounded-2xl relative mb-1"
+                >
                     <Avatar className="w-14 h-14 border-2 border-white shadow-sm">
-                      <AvatarImage src={group.avatar_url} />
+                      <AvatarImage src={(group as any).display_avatar} />
                       <AvatarFallback className="bg-emerald-100 text-emerald-700 font-bold text-lg">
-                        {group.name.substring(0, 2).toUpperCase()}
+                        {(group as any).display_name?.substring(0, 2).toUpperCase() || '??'}
                       </AvatarFallback>
                     </Avatar>
                     <div className="flex-1 border-b border-slate-100 pb-3 relative">
                       <div className="flex justify-between items-start mb-1">
-                        <h3 className="font-semibold text-slate-900 line-clamp-1">{group.name}</h3>
+                        <h3 className="font-semibold text-slate-900 line-clamp-1">{(group as any).display_name}</h3>
                         <span className="text-xs text-slate-400 font-medium" suppressHydrationWarning>
                           {formatDistanceToNow(new Date((group as any).last_message_time || group.created_at), { addSuffix: false })}
                         </span>
@@ -382,8 +512,7 @@ export default function Home() {
                       </div>
                     </div>
                   </motion.div>
-                </div>
-              ))
+                ))
             ) : (
               <div className="flex flex-col items-center justify-center py-20 text-slate-400">
                 <MessageSquare size={48} className="mb-4 opacity-20" />
@@ -475,6 +604,68 @@ export default function Home() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* User Search Dialog */}
+      <Dialog open={isSearchUsersOpen} onOpenChange={setIsSearchUsersOpen}>
+        <DialogContent className="border-none shadow-none max-h-[80vh] flex flex-col p-0">
+          <DialogHeader className="p-6 border-b border-slate-50">
+            <DialogTitle>New Chat</DialogTitle>
+            <DialogDescription>Search for people to start a conversation.</DialogDescription>
+          </DialogHeader>
+          
+          <div className="p-4 flex-1 overflow-hidden flex flex-col">
+            <div className="relative mb-4">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+              <Input 
+                placeholder="Search username..." 
+                className="pl-9 bg-slate-50 border-none rounded-xl"
+                value={userSearchQuery}
+                onChange={(e) => {
+                  setUserSearchQuery(e.target.value);
+                  searchUsers(e.target.value);
+                }}
+              />
+            </div>
+
+            <ScrollArea className="flex-1">
+              <div className="space-y-2">
+                {isSearchingUsers ? (
+                  <div className="flex justify-center p-8">
+                    <RefreshCw className="animate-spin text-emerald-500" size={24} />
+                  </div>
+                ) : foundUsers.length > 0 ? (
+                  foundUsers.map(u => (
+                    <div 
+                      key={u.id}
+                      onClick={() => handleStartDM(u.id)}
+                      className="flex items-center gap-3 p-3 hover:bg-slate-50 rounded-2xl cursor-pointer transition-colors border border-transparent hover:border-slate-100"
+                    >
+                      <Avatar className="w-12 h-12">
+                        <AvatarImage src={u.avatar_url} />
+                        <AvatarFallback className="bg-emerald-100 text-emerald-700 font-bold">
+                          {u.username.substring(0, 2).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1">
+                        <p className="font-semibold text-slate-900">{u.username}</p>
+                        <p className="text-xs text-slate-400 truncate">{u.status || 'Available'}</p>
+                      </div>
+                    </div>
+                  ))
+                ) : userSearchQuery ? (
+                  <div className="text-center py-8 text-slate-400 text-sm">No users found</div>
+                ) : (
+                  <div className="text-center py-8 text-slate-400 text-sm flex flex-col items-center gap-2">
+                    <Users size={32} className="opacity-20" />
+                    <p>Enter a name to find people</p>
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+          </div>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }
