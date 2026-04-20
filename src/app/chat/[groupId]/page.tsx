@@ -33,6 +33,113 @@ const generateUUID = () => {
   });
 };
 
+const AudioMessagePlayer = ({ url, senderName, senderAvatar, isMe }: { url: string; senderName?: string; senderAvatar?: string, isMe?: boolean }) => {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.playbackRate = playbackRate;
+    }
+  }, [playbackRate]);
+
+  const togglePlay = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (audioRef.current) {
+      if (isPlaying) audioRef.current.pause();
+      else audioRef.current.play();
+      setIsPlaying(!isPlaying);
+    }
+  };
+
+  const formatTime = (time: number) => {
+    const mins = Math.floor(time / 60);
+    const secs = Math.floor(time % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const bars = [0.3, 0.5, 0.8, 0.4, 0.9, 0.6, 0.4, 0.7, 0.3, 0.8, 0.5, 0.4, 0.9, 0.6, 0.3, 0.7, 0.5, 0.8, 0.4, 0.6, 0.3, 0.7, 0.5, 0.2];
+
+  return (
+    <div className={cn(
+      "flex items-center gap-3 w-full p-1",
+      isMe ? "text-slate-900" : "text-slate-800"
+    )}>
+      <audio 
+        ref={audioRef} 
+        src={url} 
+        onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)}
+        onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
+        onEnded={() => setIsPlaying(false)}
+        className="hidden"
+      />
+      
+      {/* Play/Pause Button */}
+      <button 
+        onClick={togglePlay}
+        className={cn(
+          "w-12 h-12 rounded-full flex items-center justify-center transition-all active:scale-95 shadow-sm",
+          isMe ? "bg-emerald-500 text-white hover:bg-emerald-600" : "bg-emerald-500 text-white hover:bg-emerald-600"
+        )}
+      >
+        {isPlaying ? (
+          <div className="flex gap-1">
+             <div className="w-1 h-4 bg-current rounded-full" />
+             <div className="w-1 h-4 bg-current rounded-full" />
+          </div>
+        ) : (
+          <div className="ml-1 border-l-[14px] border-l-current border-y-[9px] border-y-transparent" />
+        )}
+      </button>
+
+      {/* Waveform & Info */}
+      <div className="flex-1 flex flex-col gap-1.5">
+        <div className="flex items-end gap-[2px] h-6 px-1 relative">
+           {/* Progress Line Overlay */}
+           <div 
+             className="absolute bottom-0 left-1 h-full bg-emerald-500/10 pointer-events-none transition-all duration-300" 
+             style={{ width: `${(currentTime / (duration || 1)) * 100}%` }}
+           />
+           
+           {bars.map((h, i) => {
+             const progress = (currentTime / (duration || 1)) * bars.length;
+             const isActive = i <= progress;
+             return (
+               <div 
+                 key={i} 
+                 className={cn(
+                   "flex-1 rounded-full transition-colors duration-300",
+                   isActive ? (isMe ? "bg-emerald-600" : "bg-emerald-500") : "bg-slate-300"
+                 )} 
+                 style={{ height: `${h * 100}%` }} 
+               />
+             );
+           })}
+        </div>
+        
+        <div className="flex justify-between items-center px-1">
+          <span className="text-[10px] font-bold opacity-60">
+            {isPlaying ? formatTime(currentTime) : formatTime(duration)}
+          </span>
+          
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setPlaybackRate(prev => prev === 1 ? 1.5 : prev === 1.5 ? 2 : 1);
+            }}
+            className="px-2 py-0.5 bg-black/5 hover:bg-black/10 rounded-full text-[10px] font-bold transition-colors"
+          >
+            {playbackRate}x
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function Chat() {
   const { groupId } = useParams<{ groupId: string }>();
   const navigate = useNavigate();
@@ -1158,15 +1265,28 @@ export default function Chat() {
       if (uploadError) throw uploadError;
       const { data: { publicUrl } } = supabase.storage.from('chat-media').getPublicUrl(filePath);
       
-      const { error: msgError } = await supabase.from('messages').insert({
+      const { data: insertedMsg, error: msgError } = await supabase.from('messages').insert({
         group_id: groupId,
         sender_id: currentUser.id,
         content: '',
         type: 'audio',
         file_url: publicUrl
-      });
+      }).select().single();
 
       if (msgError) throw msgError;
+
+      // Optimistic Update
+      const optimisticMsg = {
+        ...insertedMsg,
+        sender_name: currentUser.username,
+        sender_avatar: currentUser.avatar_url,
+        reactions: {}
+      };
+
+      setMessages(prev => {
+        if (prev.some(m => m.id === optimisticMsg.id)) return prev;
+        return [...prev, optimisticMsg];
+      });
 
       triggerPushNotification(
         `${currentUser.username || 'Someone'} (${group?.name})`,
@@ -1174,6 +1294,7 @@ export default function Chat() {
       );
 
       setPendingMedia(null);
+      scrollToBottom();
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -1271,7 +1392,7 @@ export default function Chat() {
         .from('chat-media')
         .getPublicUrl(filePath);
 
-      const { error: msgError } = await supabase
+      const { data: insertedMsg, error: msgError } = await supabase
         .from('messages')
         .insert({
           group_id: groupId,
@@ -1279,17 +1400,33 @@ export default function Chat() {
           content: caption || '',
           type: type === 'audio' ? 'audio' : (type === 'video' ? 'video' : 'image'),
           file_url: publicUrl
-        });
+        })
+        .select()
+        .single();
 
       if (msgError) throw msgError;
       
+      // Optimistic Update
+      const optimisticMsg = {
+        ...insertedMsg,
+        sender_name: currentUser.username,
+        sender_avatar: currentUser.avatar_url,
+        reactions: {}
+      };
+
+      setMessages(prev => {
+        if (prev.some(m => m.id === optimisticMsg.id)) return prev;
+        return [...prev, optimisticMsg];
+      });
+
       triggerPushNotification(
         `${currentUser.username || 'Someone'} (${group?.name})`,
         `Shared a ${type === 'image' ? 'photo' : type === 'video' ? 'video' : 'voice message'}`
       );
 
       setPendingMedia(null);
-      setImageTexts([]); // Clear text
+      setImageTexts([]); 
+      scrollToBottom();
     } catch (error: any) {
       toast.error(`Upload failed: ${error.message}`);
     } finally {
@@ -2134,40 +2271,24 @@ export default function Chat() {
                       )}
 
                       {msg.type === 'audio' && msg.file_url && (
-                        <div className="mb-2 p-3 bg-emerald-50/50 rounded-[2rem] border border-emerald-100 min-w-[240px] shadow-sm">
-                          <div className="flex items-center gap-4">
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const audio = document.getElementById(`audio-${msg.id}`) as HTMLAudioElement;
-                                if (audio.paused) audio.play();
-                                else audio.pause();
-                              }}
-                              className="w-12 h-12 bg-emerald-500 rounded-full flex items-center justify-center text-white shadow-md active:scale-90 transition-all hover:bg-emerald-600"
-                            >
-                              <div className="flex items-center justify-center">
-                                {/* Simple CSS-based play/pause icon for performance */}
-                                <div className="border-l-[12px] border-l-white border-y-[8px] border-y-transparent ml-1" />
-                              </div>
-                            </button>
-                            <div className="flex-1 flex flex-col gap-2">
-                              {/* Animated Waveform Mockup */}
-                              <div className="flex items-end gap-[2px] h-6 px-1">
-                                {[0.3, 0.5, 0.8, 0.4, 0.9, 0.6, 0.3, 0.7, 0.4, 0.8, 0.5, 0.3, 0.6].map((h, i) => (
-                                  <div 
-                                    key={i} 
-                                    className="flex-1 bg-emerald-300 rounded-full" 
-                                    style={{ height: `${h * 100}%` }} 
-                                  />
-                                ))}
-                              </div>
-                              <div className="flex justify-between text-[10px] text-emerald-600/60 font-bold uppercase tracking-wider">
-                                <span>Voice Message</span>
-                                <span>0:00</span>
-                              </div>
-                            </div>
-                            <audio id={`audio-${msg.id}`} src={msg.file_url} className="hidden" />
-                          </div>
+                        <div className="mb-2 flex items-center gap-3 min-w-[280px] sm:min-w-[320px]">
+                           {/* Avatar like WhatsApp */}
+                           <div className="relative flex-shrink-0">
+                             <Avatar className="w-12 h-12 ring-2 ring-white shadow-sm">
+                               <AvatarImage src={msg.sender_avatar} />
+                               <AvatarFallback className="bg-emerald-100 text-emerald-700 font-bold">
+                                 {msg.sender_name?.substring(0, 2).toUpperCase()}
+                               </AvatarFallback>
+                             </Avatar>
+                             <Mic size={14} className="absolute -bottom-1 -right-1 bg-emerald-500 text-white rounded-full p-0.5 border-2 border-white shadow-sm" />
+                           </div>
+
+                           <AudioMessagePlayer 
+                             url={msg.file_url} 
+                             senderName={msg.sender_name}
+                             senderAvatar={msg.sender_avatar}
+                             isMe={isMe}
+                           />
                         </div>
                       )}
 
