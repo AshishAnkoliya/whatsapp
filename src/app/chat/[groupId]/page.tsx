@@ -4,7 +4,7 @@ import * as React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter as useNavigate, useParams } from 'next/navigation';
 
-import { ArrowLeft, Phone, Video, MoreVertical, Send, Paperclip, Smile, Image as ImageIcon, FileText, Mic, Plus, X, UserPlus, Shield, Search, LogOut, Camera, ChevronRight, Trash2, ExternalLink, Star, Bell, BellOff, Check, CheckCheck, Pencil, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Phone, Video, MoreVertical, Send, Paperclip, Smile, Image as ImageIcon, FileText, Mic, Plus, X, UserPlus, Shield, Search, LogOut, Camera, ChevronRight, Trash2, ExternalLink, Star, Bell, BellOff, Check, CheckCheck, Pencil, RefreshCw, RotateCcw } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'motion/react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -73,6 +73,22 @@ export default function Chat() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
+  const [isProcessingAction, setIsProcessingAction] = useState(false);
+  const lastActionTimeRef = useRef<number>(0);
+  const [isAudioLocked, setIsAudioLocked] = useState(false);
+  const [audioDragY, setAudioDragY] = useState(0);
+
+  // Preview & Edit States
+  const [pendingMedia, setPendingMedia] = useState<{
+    file: File;
+    previewUrl: string;
+    type: 'image' | 'video' | 'audio';
+    caption: string;
+    rotation: number;
+    isMuted: boolean;
+    startTime: number;
+    endTime: number;
+  } | null>(null);
 
   // Click outside to close emoji picker
   useEffect(() => {
@@ -825,10 +841,11 @@ export default function Chat() {
 
   const startCamera = async () => {
     try {
-      if (cameraStream) stopCamera(); // Stop old stream before restarting
+      if (cameraStream) stopCamera();
+      // Start with ONLY video to eliminate startup noise
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { facingMode: facingMode }, 
-        audio: true 
+        audio: false 
       });
       setCameraStream(stream);
       if (videoRef.current) {
@@ -836,22 +853,26 @@ export default function Chat() {
       }
     } catch (err) {
       console.error("Camera access error:", err);
-      toast.error("Could not access camera. Please check permissions.");
+      toast.error("Could not access camera.");
       setIsCameraOpen(false);
     }
   };
 
   const switchCamera = () => {
+    if (isProcessingAction) return;
     setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
   };
 
-  const handleStartRecording = () => {
-    if (!cameraStream) return;
-    
-    const chunks: Blob[] = [];
-    const options = { mimeType: 'video/webm;codecs=vp9,opus' };
+  const handleStartRecording = async () => {
+    if (!cameraStream || isRecording || isProcessingAction) return;
     
     try {
+      // Dynamically add audio only when starting recording
+      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioTrack = audioStream.getAudioTracks()[0];
+      cameraStream.addTrack(audioTrack);
+
+      const chunks: Blob[] = [];
       const recorder = new MediaRecorder(cameraStream);
       mediaRecorderRef.current = recorder;
       
@@ -862,8 +883,10 @@ export default function Chat() {
       recorder.onstop = () => {
         const blob = new Blob(chunks, { type: 'video/webm' });
         const file = new File([blob], `video_${Date.now()}.mp4`, { type: 'video/mp4' });
-        // Forward as a mock event to handleFileUpload
         handleFileUpload({ target: { files: [file] } } as any);
+        // Clean up audio track
+        audioTrack.stop();
+        cameraStream.removeTrack(audioTrack);
       };
       
       recorder.start();
@@ -874,7 +897,7 @@ export default function Chat() {
       }, 1000);
     } catch (err) {
       console.error("Recording error:", err);
-      toast.error("Recording failed to start.");
+      toast.error("Could not access microphone for video.");
     }
   };
 
@@ -902,42 +925,86 @@ export default function Chat() {
   };
 
   const capturePhoto = () => {
-    if (videoRef.current && canvasRef.current) {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob((blob) => {
-          if (blob) {
-            const file = new File([blob], `camera_${Date.now()}.jpg`, { type: 'image/jpeg' });
-            // Mock file object for existing handleFileUpload
-            const event = {
-              target: {
-                files: [file]
-              }
-            } as any;
-            handleFileUpload(event);
-            setIsCameraOpen(false);
-          }
-        }, 'image/jpeg', 0.9);
-      }
+    if (!videoRef.current || !canvasRef.current || isProcessingAction) return;
+    
+    const now = Date.now();
+    if (now - lastActionTimeRef.current < 1000) return; // Strict 1s debounce
+    lastActionTimeRef.current = now;
+    
+    setIsProcessingAction(true);
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        if (blob) {
+          const file = new File([blob], `camera_${Date.now()}.jpg`, { type: 'image/jpeg' });
+          handleFileUpload({ target: { files: [file] } } as any);
+          setIsCameraOpen(false);
+        }
+        setIsProcessingAction(false);
+      }, 'image/jpeg', 0.9);
+    } else {
+      setIsProcessingAction(false);
     }
   };
+
+
+
+  const handleAudioPointerMove = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!isRecordingAudio || isAudioLocked) return;
+    const currentX = 'clientX' in e ? e.clientX : e.touches[0].clientX;
+    const currentY = 'clientY' in e ? e.clientY : e.touches[0].clientY;
+    
+    // Horizontal Cancel
+    const deltaX = currentX - audioStartX;
+    setAudioDragX(deltaX);
+    
+    // Vertical Lock
+    const deltaY = currentY - audioStartY;
+    setAudioDragY(deltaY);
+    
+    if (deltaX < -120) { 
+      stopAudioRecording(true);
+    } else if (deltaY < -120) {
+      setIsAudioLocked(true);
+      setAudioDragY(0);
+      setAudioDragX(0);
+    }
+  };
+
+  const stopAudioRecording = (cancel = false) => {
+    if (audioRecorderRef.current && isRecordingAudio) {
+      setIsAudioCancelled(cancel);
+      audioRecorderRef.current.stop();
+      setIsRecordingAudio(false);
+      setAudioTime(0);
+      setAudioDragX(0);
+      setAudioDragY(0);
+      if (audioIntervalRef.current) clearInterval(audioIntervalRef.current);
+    }
+  };
+
+  const [audioStartY, setAudioStartY] = useState(0);
 
   const startAudioRecording = async (e: React.MouseEvent | React.TouchEvent) => {
     try {
       const startX = 'clientX' in e ? e.clientX : e.touches[0].clientX;
+      const startY = 'clientY' in e ? e.clientY : e.touches[0].clientY;
       setAudioStartX(startX);
+      setAudioStartY(startY);
       setAudioDragX(0);
+      setAudioDragY(0);
+      setIsAudioLocked(false);
+      setIsAudioCancelled(false);
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream);
       audioRecorderRef.current = recorder;
       audioChunksRef.current = [];
-      setIsAudioCancelled(false);
 
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) audioChunksRef.current.push(e.data);
@@ -948,7 +1015,19 @@ export default function Chat() {
         if (!isAudioCancelled && audioChunksRef.current.length > 0) {
           const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
           const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
-          handleFileUpload({ target: { files: [file] } } as any);
+          
+          // Redirect to Preview & Edit for Voice too
+          const previewUrl = URL.createObjectURL(blob);
+          setPendingMedia({
+            file,
+            previewUrl,
+            type: 'audio',
+            caption: '',
+            rotation: 0,
+            isMuted: false,
+            startTime: 0,
+            endTime: 0
+          });
         }
       };
 
@@ -963,111 +1042,80 @@ export default function Chat() {
       toast.error("Could not access microphone.");
     }
   };
-
-  const handleAudioPointerMove = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!isRecordingAudio) return;
-    const currentX = 'clientX' in e ? e.clientX : e.touches[0].clientX;
-    const deltaX = currentX - audioStartX;
-    setAudioDragX(deltaX);
-    
-    if (deltaX < -80) { // Slide threshold reached
-      stopAudioRecording(true);
-    }
-  };
-
-  const stopAudioRecording = (cancel = false) => {
-    if (audioRecorderRef.current && isRecordingAudio) {
-      setIsAudioCancelled(cancel);
-      audioRecorderRef.current.stop();
-      setIsRecordingAudio(false);
-      setAudioTime(0);
-      setAudioDragX(0);
-      if (audioIntervalRef.current) clearInterval(audioIntervalRef.current);
-    }
-  };
   const [forwardMsg, setForwardMsg] = useState<Message | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const typingTimeoutRef = useRef<{ [key: string]: NodeJS.Timeout }>({});
   const [uploadProgress, setUploadProgress] = useState<{ [fileName: string]: number }>({});
 
-  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement> | { target: { files: File[] } }) {
     const files = Array.from(e.target.files || []);
     if (files.length === 0 || !currentUser || !groupId) return;
 
+    // For now, only handle single file for preview & edit flow
+    const file = files[0];
+    const previewUrl = URL.createObjectURL(file);
+    let type: 'image' | 'video' | 'audio' = 'image';
+    if (file.type.startsWith('video/')) type = 'video';
+    else if (file.type.startsWith('audio/')) type = 'audio';
+
+    setPendingMedia({
+      file,
+      previewUrl,
+      type,
+      caption: '',
+      rotation: 0,
+      isMuted: false,
+      startTime: 0,
+      endTime: 0
+    });
+  }
+
+  async function finalDispatchMedia() {
+    if (!pendingMedia || !currentUser || !groupId) return;
+    
     setIsUploading(true);
+    const { file, type, caption } = pendingMedia;
+    
+    try {
+      const fileId = Math.random().toString(36).substring(7);
+      const fileExt = file.name.split('.').pop() || (type === 'audio' ? 'webm' : 'jpg');
+      const fileName = `${fileId}.${fileExt}`;
+      const filePath = `${groupId}/${fileName}`;
 
-    for (const file of files) {
-      try {
-        const fileId = Math.random().toString(36).substring(7);
-        setUploadProgress(prev => ({ ...prev, [file.name]: 10 })); // Start at 10%
+      const { error: uploadError } = await supabase.storage
+        .from('chat-media')
+        .upload(filePath, file);
 
-        const fileExt = file.name.split('.').pop();
-        const fileName = `${fileId}.${fileExt}`;
-        const filePath = `${groupId}/${fileName}`;
+      if (uploadError) throw uploadError;
 
-        // Artificial progress simulation since basic Supabase upload is one-shot
-        const progressInterval = setInterval(() => {
-          setUploadProgress(prev => {
-            const current = prev[file.name] || 0;
-            if (current >= 90) {
-              clearInterval(progressInterval);
-              return prev;
-            }
-            return { ...prev, [file.name]: current + 10 };
-          });
-        }, 200);
+      const { data: { publicUrl } } = supabase.storage
+        .from('chat-media')
+        .getPublicUrl(filePath);
 
-        const { error: uploadError } = await supabase.storage
-          .from('chat-media')
-          .upload(filePath, file);
+      const { error: msgError } = await supabase
+        .from('messages')
+        .insert({
+          group_id: groupId,
+          sender_id: currentUser.id,
+          content: caption || file.name,
+          type: type === 'audio' ? 'audio' : (type === 'video' ? 'video' : 'image'),
+          file_url: publicUrl
+        });
 
-        clearInterval(progressInterval);
+      if (msgError) throw msgError;
+      
+      triggerPushNotification(
+        `${currentUser.username || 'Someone'} (${group?.name})`,
+        `Shared a ${type === 'image' ? 'photo' : type === 'video' ? 'video' : 'voice message'}`
+      );
 
-        if (uploadError) throw uploadError;
-
-        setUploadProgress(prev => ({ ...prev, [file.name]: 100 }));
-
-        const { data: { publicUrl } } = supabase.storage
-          .from('chat-media')
-          .getPublicUrl(filePath);
-
-        let type: 'image' | 'video' | 'document' = 'document';
-        if (file.type.startsWith('image/')) type = 'image';
-        else if (file.type.startsWith('video/')) type = 'video';
-
-        const { error: msgError } = await supabase
-          .from('messages')
-          .insert({
-            group_id: groupId,
-            sender_id: currentUser.id,
-            content: file.name,
-            type,
-            file_url: publicUrl
-          });
-
-        if (msgError) throw msgError;
-        
-        // Trigger Push Notification for file/media
-        triggerPushNotification(
-          `${currentUser.username || 'Someone'} (${group?.name})`,
-          `Shared a ${type === 'image' ? 'photo' : type === 'video' ? 'video' : 'file'}: ${file.name}`
-        );
-
-        // Remove from progress after a delay
-        setTimeout(() => {
-          setUploadProgress(prev => {
-            const newProgress = { ...prev };
-            delete newProgress[file.name];
-            return newProgress;
-          });
-        }, 1000);
-
-      } catch (error: any) {
-        toast.error(`Failed to upload ${file.name}: ${error.message}`);
-      }
+      setPendingMedia(null);
+    } catch (error: any) {
+      toast.error(`Upload failed: ${error.message}`);
+    } finally {
+      setIsUploading(false);
     }
-    setIsUploading(false);
   }
 
   const [isUpdatingGroup, setIsUpdatingGroup] = useState(false);
@@ -2102,19 +2150,35 @@ export default function Chat() {
 
         <form onSubmit={handleSendMessage} className="flex items-center gap-2">
           {isRecordingAudio ? (
-            <div className="flex-1 flex items-center justify-between bg-emerald-50 rounded-full px-6 py-3 border border-emerald-100">
+            <div className="flex-1 flex items-center justify-between bg-emerald-50 rounded-full px-6 py-3 border border-emerald-100 relative overflow-hidden">
               <div className="flex items-center gap-3">
                 <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
                 <span className="text-sm font-bold text-emerald-700">{formatTime(audioTime)}</span>
               </div>
-              <motion.div 
-                initial={{ x: 20, opacity: 0 }}
-                animate={{ x: 0, opacity: 1 }}
-                className="text-xs text-emerald-600 font-medium flex items-center gap-2"
-              >
-                <span>Slide left to cancel</span>
-                <ChevronRight size={14} className="rotate-180 opacity-50" />
-              </motion.div>
+              
+              {!isAudioLocked ? (
+                <motion.div 
+                  initial={{ x: 20, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  className="text-xs text-emerald-600 font-medium flex items-center gap-2"
+                >
+                  <div className="flex flex-col items-center -mt-8 absolute right-4 transition-all">
+                    <ChevronRight size={20} className="-rotate-90 animate-bounce text-emerald-400" />
+                    <span className="text-[10px] opacity-70">Lock</span>
+                  </div>
+                  <span>Slide left to cancel</span>
+                  <ChevronRight size={14} className="rotate-180 opacity-50" />
+                </motion.div>
+              ) : (
+                <motion.div 
+                  initial={{ scale: 0.8 }}
+                  animate={{ scale: 1 }}
+                  className="text-xs text-emerald-700 font-bold flex items-center gap-2"
+                >
+                  <div className="w-2 h-2 bg-emerald-500 rounded-full animate-ping" />
+                  Locked Recording...
+                </motion.div>
+              )}
             </div>
           ) : (
             <>
@@ -2218,19 +2282,29 @@ export default function Chat() {
             ) : (
               <Button
                 type="button"
-                onMouseDown={(e) => startAudioRecording(e)}
-                onMouseUp={() => stopAudioRecording(false)}
-                onMouseMove={(e) => handleAudioPointerMove(e)}
-                onTouchStart={(e) => startAudioRecording(e)}
-                onTouchEnd={() => stopAudioRecording(false)}
-                onTouchMove={(e) => handleAudioPointerMove(e)}
+                onPointerDown={isAudioLocked ? undefined : (e) => {
+                  e.preventDefault();
+                  startAudioRecording(e);
+                }}
+                onPointerUp={isAudioLocked ? undefined : (e) => {
+                  e.preventDefault();
+                  stopAudioRecording(false);
+                }}
+                onPointerMove={isAudioLocked ? undefined : (e) => {
+                  e.preventDefault();
+                  handleAudioPointerMove(e);
+                }}
+                onClick={() => {
+                  if (isAudioLocked) stopAudioRecording(false);
+                }}
                 size="icon"
                 className={cn(
                   "bg-emerald-500 hover:bg-emerald-600 text-white rounded-full w-12 h-12 shadow-lg shadow-emerald-200 transition-all touch-none select-none",
-                  isRecordingAudio && "scale-150 ring-8 ring-emerald-500/20"
+                  isRecordingAudio && "scale-150 ring-8 ring-emerald-500/20",
+                  isProcessingAction && "opacity-50 pointer-events-none"
                 )}
               >
-                <Mic size={20} className={isRecordingAudio ? "animate-pulse" : ""} />
+                {isAudioLocked ? <X size={20} /> : <Mic size={20} className={isRecordingAudio ? "animate-pulse" : ""} />}
               </Button>
             )}
           </motion.div>
@@ -2605,16 +2679,17 @@ export default function Chat() {
                   </button>
 
                   <button
-                    onMouseDown={handleStartRecording}
-                    onMouseUp={handleStopRecording}
-                    onTouchStart={handleStartRecording}
-                    onTouchEnd={handleStopRecording}
-                    onClick={() => {
+                    onPointerDown={handleStartRecording}
+                    onPointerUp={handleStopRecording}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
                       if (!isRecording) capturePhoto();
                     }}
                     className={cn(
                       "w-20 h-20 bg-white rounded-full border-4 border-white/50 flex items-center justify-center transition-all shadow-2xl relative",
-                      isRecording ? "scale-125 border-red-500/50" : "active:scale-90"
+                      isRecording ? "scale-125 border-red-500/50" : "active:scale-90",
+                      isProcessingAction && "opacity-50 pointer-events-none"
                     )}
                   >
                     <div className={cn(
@@ -2625,6 +2700,145 @@ export default function Chat() {
 
                   <div className="p-10" /> {/* Spacer */}
                 </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Media Preview & Edit Overlay */}
+      <AnimatePresence>
+        {pendingMedia && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            className="fixed inset-0 z-[300] bg-black flex flex-col"
+          >
+            {/* Header Toolbar */}
+            <div className="p-4 flex justify-between items-center bg-gradient-to-b from-black/60 to-transparent">
+              <button 
+                onClick={() => setPendingMedia(null)}
+                className="p-2 text-white hover:bg-white/10 rounded-full transition-colors"
+              >
+                <X size={24} />
+              </button>
+              
+              <div className="flex items-center gap-4">
+                {pendingMedia.type === 'image' && (
+                  <>
+                    <button 
+                      onClick={() => setPendingMedia(prev => prev ? { ...prev, rotation: (prev.rotation + 90) % 360 } : null)}
+                      className="p-2 text-white hover:bg-white/10 rounded-full transition-colors"
+                    >
+                      <RotateCcw size={24} />
+                    </button>
+                    <button className="p-2 text-white hover:bg-white/10 rounded-full transition-colors">
+                      <Pencil size={24} />
+                    </button>
+                    <button className="p-2 text-white hover:bg-white/10 rounded-full transition-colors font-bold text-xl">
+                      T
+                    </button>
+                  </>
+                )}
+                {pendingMedia.type === 'video' && (
+                  <button 
+                    onClick={() => setPendingMedia(prev => prev ? { ...prev, isMuted: !prev.isMuted } : null)}
+                    className="p-2 text-white hover:bg-white/10 rounded-full transition-colors"
+                  >
+                    {pendingMedia.isMuted ? <BellOff size={24} /> : <Bell size={24} />}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Main Preview Area */}
+            <div className="flex-1 relative flex items-center justify-center p-4 overflow-hidden">
+              {pendingMedia.type === 'image' ? (
+                <div 
+                  className="relative transition-transform duration-300 group"
+                  style={{ transform: `rotate(${pendingMedia.rotation}deg)` }}
+                >
+                  <img 
+                    src={pendingMedia.previewUrl} 
+                    className="max-w-full max-h-[70vh] rounded-lg shadow-2xl object-contain pointer-events-none"
+                  />
+                  {/* Drawing Canvas Overlay */}
+                  <canvas
+                    id="doodle-canvas"
+                    className="absolute inset-0 w-full h-full cursor-crosshair touch-none"
+                    onPointerDown={(e) => {
+                      const canvas = e.currentTarget;
+                      const ctx = canvas.getContext('2d');
+                      if (ctx) {
+                        ctx.strokeStyle = '#10b981'; // Emerald-500
+                        ctx.lineWidth = 4;
+                        ctx.lineCap = 'round';
+                        ctx.beginPath();
+                        const rect = canvas.getBoundingClientRect();
+                        ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+                        (canvas as any).isDrawing = true;
+                      }
+                    }}
+                    onPointerMove={(e) => {
+                      const canvas = e.currentTarget;
+                      if (!(canvas as any).isDrawing) return;
+                      const ctx = canvas.getContext('2d');
+                      if (ctx) {
+                        const rect = canvas.getBoundingClientRect();
+                        ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+                        ctx.stroke();
+                      }
+                    }}
+                    onPointerUp={(e) => {
+                      (e.currentTarget as any).isDrawing = false;
+                    }}
+                    width={800} // Default internal resolution
+                    height={1200}
+                  />
+                </div>
+              ) : pendingMedia.type === 'video' ? (
+                <div className="relative w-full max-w-4xl flex flex-col gap-4">
+                  <video 
+                    src={pendingMedia.previewUrl} 
+                    muted={pendingMedia.isMuted}
+                    controls 
+                    className="w-full max-h-[60vh] rounded-xl shadow-2xl"
+                  />
+                  {/* Future Trim Slider will go here */}
+                </div>
+              ) : (
+                <div className="bg-slate-800 p-8 rounded-3xl flex flex-col items-center gap-4 text-white">
+                  <Mic size={48} className="text-emerald-500 animate-pulse" />
+                  <p className="font-bold">Voice Message Draft</p>
+                  <audio src={pendingMedia.previewUrl} controls className="brightness-110" />
+                </div>
+              )}
+            </div>
+
+            {/* Caption & Send Footer */}
+            <div className="p-6 bg-gradient-to-t from-black/60 to-transparent flex flex-col gap-4">
+              <div className="flex items-center gap-3 bg-slate-900/80 backdrop-blur-md rounded-full px-6 py-2 border border-white/10 mx-auto w-full max-w-2xl">
+                <Input
+                  value={pendingMedia.caption}
+                  onChange={(e) => setPendingMedia(prev => prev ? { ...prev, caption: e.target.value } : null)}
+                  placeholder="Add a caption..."
+                  className="bg-transparent border-none text-white focus-visible:ring-0 placeholder:text-white/40"
+                />
+              </div>
+              
+              <div className="flex justify-end pr-4">
+                <button
+                  onClick={finalDispatchMedia}
+                  disabled={isUploading}
+                  className="w-16 h-16 bg-emerald-500 hover:bg-emerald-600 rounded-full flex items-center justify-center text-white shadow-2xl transition-transform active:scale-95 disabled:opacity-50"
+                >
+                  {isUploading ? (
+                    <div className="w-8 h-8 border-4 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <Check size={32} />
+                  )}
+                </button>
               </div>
             </div>
           </motion.div>
