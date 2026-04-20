@@ -33,41 +33,18 @@ const generateUUID = () => {
   });
 };
 
-const AudioMessagePlayer = ({ url, savedDuration, isMe }: { url: string; savedDuration?: string; isMe?: boolean }) => {
+const AudioMessagePlayer = ({ url, senderName, senderAvatar, isMe }: { url: string; senderName?: string; senderAvatar?: string, isMe?: boolean }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const initialDuration = savedDuration && !isNaN(parseFloat(savedDuration)) && parseFloat(savedDuration) > 0
-    ? parseFloat(savedDuration)
-    : 0;
-  const [duration, setDuration] = useState(initialDuration);
+  const [duration, setDuration] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
   const audioRef = useRef<HTMLAudioElement>(null);
-
-  // Auto-fetch duration on mount for old messages that don't have saved duration
-  useEffect(() => {
-    if (initialDuration > 0) return; // Already have duration, skip
-    const tempAudio = new Audio();
-    tempAudio.preload = 'metadata';
-    tempAudio.src = url;
-    tempAudio.onloadedmetadata = () => {
-      if (isFinite(tempAudio.duration) && tempAudio.duration > 0) {
-        setDuration(tempAudio.duration);
-      }
-    };
-  }, [url]);
 
   useEffect(() => {
     if (audioRef.current) {
       audioRef.current.playbackRate = playbackRate;
     }
   }, [playbackRate]);
-
-  // Sync duration when main audio element loads metadata
-  const onLoadedMetadata = () => {
-    if (audioRef.current && isFinite(audioRef.current.duration)) {
-      setDuration(audioRef.current.duration);
-    }
-  };
 
   const togglePlay = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -97,9 +74,8 @@ const AudioMessagePlayer = ({ url, savedDuration, isMe }: { url: string; savedDu
         ref={audioRef} 
         src={url} 
         onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)}
-        onLoadedMetadata={onLoadedMetadata}
+        onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
         onEnded={() => setIsPlaying(false)}
-        preload="metadata"
         className="hidden"
       />
       
@@ -203,7 +179,6 @@ export default function Chat() {
   const audioRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const audioTimeRef = useRef<number>(0); // Ref to avoid stale closure in onstop
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
@@ -1210,7 +1185,7 @@ export default function Chat() {
                file,
                previewUrl,
                type: 'audio' as const,
-               caption: audioTimeRef.current.toString(), // Use ref to avoid stale closure
+               caption: '',
                rotation: 0,
                isMuted: false,
                isRoundCrop: false,
@@ -1239,9 +1214,7 @@ export default function Chat() {
       recorder.start(200); // Collect data every 200ms to ensure it's not empty
       setIsRecordingAudio(true);
       setAudioTime(0);
-      audioTimeRef.current = 0;
       audioIntervalRef.current = setInterval(() => {
-        audioTimeRef.current += 1;
         setAudioTime(prev => prev + 1);
       }, 1000);
     } catch (err) {
@@ -1296,7 +1269,7 @@ export default function Chat() {
       const { data: insertedMsg, error: msgError } = await supabase.from('messages').insert({
         group_id: groupId,
         sender_id: currentUser.id,
-        content: media.caption || '',  // caption holds duration for audio messages
+        content: '',
         type: 'audio',
         file_url: publicUrl
       }).select().single();
@@ -2313,7 +2286,8 @@ export default function Chat() {
 
                            <AudioMessagePlayer 
                              url={msg.file_url} 
-                             savedDuration={msg.type === 'audio' ? msg.content : undefined}
+                             senderName={msg.sender_name}
+                             senderAvatar={msg.sender_avatar}
                              isMe={isMe}
                            />
                         </div>
