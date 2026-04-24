@@ -70,6 +70,19 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
       peerInstance.current = peer;
 
+      // Check if there is an already ringing call for me when I open the app
+      const { data: existingCall } = await supabase
+        .from('calls')
+        .select('*')
+        .eq('receiver_id', user.id)
+        .eq('status', 'ringing')
+        .limit(1)
+        .single();
+        
+      if (existingCall) {
+         handleCallEvent(existingCall, user.id);
+      }
+
       // Listen to Supabase `calls` table
       const subscription = supabase
         .channel('public:calls')
@@ -190,6 +203,19 @@ export function CallProvider({ children }: { children: ReactNode }) {
         cleanupCall();
         return;
     }
+
+    // Trigger Push Notification to wake up receiver's phone if app is closed
+    fetch('/api/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        groupId: receiverId, // Using receiverId as target
+        senderId: userId,
+        title: `Incoming ${type} Call`,
+        body: 'Tap to answer',
+        url: window.location.href
+      })
+    }).catch(console.error);
 
     setCurrentCall({
         id: data.id,
