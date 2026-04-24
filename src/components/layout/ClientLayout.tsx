@@ -9,7 +9,7 @@ import { supabase } from '@/lib/supabase';
 import { getCurrentUser } from '@/lib/auth';
 import Auth from '@/app/auth/page';
 import Onboarding from './Onboarding';
-
+import { CallScreen } from '../CallScreen';
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -79,8 +79,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       </div>
       {!isChatPage && <BottomNav />}
       {session?.user?.id && <Onboarding userId={session.user.id} />}
+      <CallScreen />
       <Toaster position="top-center" />
-
     </>
   );
 }

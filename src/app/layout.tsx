@@ -13,6 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 import ClientLayout from "@/components/layout/ClientLayout";
+import { CallProvider } from "@/components/CallContext";
 import { Toaster } from "sonner";
 
 export const metadata: Metadata = {
@@ -44,7 +45,9 @@ export default function RootLayout({
         data-new-gr-c-s-check-loaded="14.1285.0"
         data-gr-ext-installed="" className="h-full bg-slate-50 text-slate-900 font-sans selection:bg-emerald-100 flex flex-col items-center overflow-hidden overscroll-none">
         <main className="fixed inset-0 w-full max-w-md mx-auto bg-white shadow-xl flex flex-col overflow-hidden">
-          <ClientLayout>{children}</ClientLayout>
+          <CallProvider>
+            <ClientLayout>{children}</ClientLayout>
+          </CallProvider>
           <Toaster position="top-center" richColors />
         </main>
         <script

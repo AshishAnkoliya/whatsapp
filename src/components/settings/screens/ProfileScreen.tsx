@@ -7,6 +7,9 @@ import { Camera, User, Info, Smartphone } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { toast } from "sonner";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 
 export function ProfileScreen({ onBack }: { onBack: () => void }) {
   const [profile, setProfile] = useState<any>(null);
@@ -64,36 +67,49 @@ export function ProfileScreen({ onBack }: { onBack: () => void }) {
     }
   }
 
-  const handleEditName = async () => {
-    const newName = prompt("Enter your name", profile?.username);
-    if (!newName || newName === profile?.username) return;
+  const [isEditNameOpen, setIsEditNameOpen] = useState(false);
+  const [isEditStatusOpen, setIsEditStatusOpen] = useState(false);
+  const [draftName, setDraftName] = useState("");
+  const [draftStatus, setDraftStatus] = useState("");
 
-    if (localStorage.getItem("mock_session")) {
-      setProfile((p: any) => ({ ...p, username: newName }));
+  const saveName = async () => {
+    if (!draftName || draftName === profile?.username) {
+      setIsEditNameOpen(false);
       return;
     }
 
-    const { error } = await supabase.from("profiles").update({ username: newName }).eq("id", user.id);
+    if (localStorage.getItem("mock_session")) {
+      setProfile((p: any) => ({ ...p, username: draftName }));
+      setIsEditNameOpen(false);
+      return;
+    }
+
+    const { error } = await supabase.from("profiles").update({ username: draftName }).eq("id", user.id);
     if (!error) {
-      setProfile((p: any) => ({ ...p, username: newName }));
+      setProfile((p: any) => ({ ...p, username: draftName }));
       toast.success("Name updated");
     }
+    setIsEditNameOpen(false);
   }
 
-  const handleEditStatus = async () => {
-    const newStatus = prompt("Enter your about status", profile?.status);
-    if (!newStatus || newStatus === profile?.status) return;
-
-    if (localStorage.getItem("mock_session")) {
-      setProfile((p: any) => ({ ...p, status: newStatus }));
+  const saveStatus = async () => {
+    if (!draftStatus || draftStatus === profile?.status) {
+      setIsEditStatusOpen(false);
       return;
     }
 
-    const { error } = await supabase.from("profiles").update({ status: newStatus }).eq("id", user.id);
+    if (localStorage.getItem("mock_session")) {
+      setProfile((p: any) => ({ ...p, status: draftStatus }));
+      setIsEditStatusOpen(false);
+      return;
+    }
+
+    const { error } = await supabase.from("profiles").update({ status: draftStatus }).eq("id", user.id);
     if (!error) {
-      setProfile((p: any) => ({ ...p, status: newStatus }));
+      setProfile((p: any) => ({ ...p, status: draftStatus }));
       toast.success("Status updated");
     }
+    setIsEditStatusOpen(false);
   }
 
   return (
@@ -120,7 +136,13 @@ export function ProfileScreen({ onBack }: { onBack: () => void }) {
       </div>
 
       <div className="bg-white border-y border-slate-100">
-        <div className="flex items-start gap-4 p-4 border-b border-slate-50 cursor-pointer hover:bg-slate-50 transition-colors" onClick={handleEditName}>
+        <div 
+          className="flex items-start gap-4 p-4 border-b border-slate-50 cursor-pointer hover:bg-slate-50 transition-colors" 
+          onClick={() => {
+            setDraftName(profile?.username || "");
+            setIsEditNameOpen(true);
+          }}
+        >
           <User className="text-slate-400 mt-1" size={24} />
           <div className="flex-1">
             <p className="text-sm font-medium text-slate-500">Name</p>
@@ -131,7 +153,13 @@ export function ProfileScreen({ onBack }: { onBack: () => void }) {
           </div>
         </div>
 
-        <div className="flex items-start gap-4 p-4 border-b border-slate-50 cursor-pointer hover:bg-slate-50 transition-colors" onClick={handleEditStatus}>
+        <div 
+          className="flex items-start gap-4 p-4 border-b border-slate-50 cursor-pointer hover:bg-slate-50 transition-colors" 
+          onClick={() => {
+            setDraftStatus(profile?.status || "");
+            setIsEditStatusOpen(true);
+          }}
+        >
           <Info className="text-slate-400 mt-1" size={24} />
           <div className="flex-1">
             <p className="text-sm font-medium text-slate-500">About</p>
@@ -147,6 +175,46 @@ export function ProfileScreen({ onBack }: { onBack: () => void }) {
           </div>
         </div>
       </div>
+
+      <Dialog open={isEditNameOpen} onOpenChange={setIsEditNameOpen}>
+        <DialogContent className="max-w-[calc(100%-2rem)] w-full rounded-2xl p-6">
+          <DialogHeader>
+            <DialogTitle>Enter your name</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <Input 
+              value={draftName} 
+              onChange={(e) => setDraftName(e.target.value)} 
+              className="border-b-2 border-0 border-emerald-500 rounded-none px-0 focus-visible:ring-0 text-base"
+              autoFocus
+            />
+          </div>
+          <div className="flex justify-end gap-4 mt-2">
+            <Button variant="ghost" onClick={() => setIsEditNameOpen(false)} className="text-slate-500">Cancel</Button>
+            <Button onClick={saveName} className="bg-emerald-500 hover:bg-emerald-600">Save</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isEditStatusOpen} onOpenChange={setIsEditStatusOpen}>
+        <DialogContent className="max-w-[calc(100%-2rem)] w-full rounded-2xl p-6">
+          <DialogHeader>
+            <DialogTitle>Enter your about status</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <Input 
+              value={draftStatus} 
+              onChange={(e) => setDraftStatus(e.target.value)} 
+              className="border-b-2 border-0 border-emerald-500 rounded-none px-0 focus-visible:ring-0 text-base"
+              autoFocus
+            />
+          </div>
+          <div className="flex justify-end gap-4 mt-2">
+            <Button variant="ghost" onClick={() => setIsEditStatusOpen(false)} className="text-slate-500">Cancel</Button>
+            <Button onClick={saveStatus} className="bg-emerald-500 hover:bg-emerald-600">Save</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

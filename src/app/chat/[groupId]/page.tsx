@@ -21,7 +21,7 @@ import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { subscribeToPush } from '@/lib/push';
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
-
+import { useCall } from '@/components/CallContext';
 
 // Fallback for crypto.randomUUID which is only available in secure contexts (HTTPS/localhost)
 const generateUUID = () => {
@@ -143,6 +143,7 @@ const AudioMessagePlayer = ({ url, senderName, senderAvatar, isMe }: { url: stri
 };
 
 export default function Chat() {
+  const { initiateCall } = useCall();
   const { groupId } = useParams<{ groupId: string }>();
   const navigate = useNavigate();
   const [group, setGroup] = useState<Group | null>(null);
@@ -528,6 +529,24 @@ export default function Chat() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleCall(type: 'audio' | 'video') {
+    if (!group || !currentUser) return;
+    
+    // For now we only support 1-to-1 calls, so we find the other member in a DM
+    if (group.type !== 'dm') {
+      toast.info('Group calling is not yet supported in this version. Try calling from a direct message!');
+      return;
+    }
+
+    const otherMember = members.find(m => m.user_id !== currentUser.id);
+    if (!otherMember) {
+      toast.error('Could not find the other user to call.');
+      return;
+    }
+
+    await initiateCall(otherMember.user_id, type);
   }
 
   async function handleSendMessage(e?: React.FormEvent) {
@@ -2080,8 +2099,8 @@ export default function Chat() {
                         <div className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full border-2 border-white animate-pulse" />
                       )}
                     </button>
-                    <Video size={20} className="hidden sm:block hover:text-emerald-600 transition-colors cursor-pointer" />
-                    <Phone size={20} className="hidden sm:block hover:text-emerald-600 transition-colors cursor-pointer" />
+                    <Video size={20} className="hidden sm:block hover:text-emerald-600 transition-colors cursor-pointer" onClick={() => handleCall('video')} />
+                    <Phone size={20} className="hidden sm:block hover:text-emerald-600 transition-colors cursor-pointer" onClick={() => handleCall('audio')} />
                     <button
                       onClick={() => setIsViewingStarred(true)}
                       className="p-1 hover:bg-slate-100 rounded-full transition-colors text-yellow-500 hidden xs:block"
