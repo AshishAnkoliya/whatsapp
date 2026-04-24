@@ -6,12 +6,12 @@ import { Phone, PhoneOff, Video, VideoOff, Mic, MicOff, Camera } from 'lucide-re
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 export function CallScreen() {
-  const { 
-    currentCall, 
-    localStream, 
-    remoteStream, 
-    acceptCall, 
-    rejectCall, 
+  const {
+    currentCall,
+    localStream,
+    remoteStream,
+    acceptCall,
+    rejectCall,
     endCall,
     toggleMute,
     toggleVideo,
@@ -43,21 +43,21 @@ export function CallScreen() {
 
     return (
       <div className="fixed inset-0 z-[100] bg-slate-900 text-white flex flex-col items-center justify-between py-24 overflow-hidden selection:bg-transparent">
-        
-        {/* Ringtone Audio */}
+
+        {/* Ringtone Audio - Place ringtone.mp3 in public folder! */}
         <audio autoPlay loop src="/ringtone.mp3" className="hidden" />
 
         {/* Background Video Preview for Caller */}
         {isCaller && isVideo && localStream && (
           <div className="absolute inset-0 z-[-1]">
-             <video 
-               ref={localVideoRef} 
-               autoPlay 
-               playsInline 
-               muted 
-               className="w-full h-full object-cover opacity-60"
-             />
-             <div className="absolute inset-0 bg-gradient-to-b from-slate-900/80 via-transparent to-slate-900/95" />
+            <video
+              ref={localVideoRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-full h-full object-cover opacity-60"
+            />
+            <div className="absolute inset-0 bg-gradient-to-b from-slate-900/80 via-transparent to-slate-900/95" />
           </div>
         )}
         {(!isCaller || !isVideo || !localStream) && (
@@ -65,7 +65,7 @@ export function CallScreen() {
         )}
 
         <div className="flex flex-col items-center gap-8 relative z-10 mt-10">
-          
+
           {/* Animated Avatar Group */}
           <div className="relative flex items-center justify-center">
             {/* Ripple Effects */}
@@ -79,7 +79,7 @@ export function CallScreen() {
               </AvatarFallback>
             </Avatar>
           </div>
-          
+
           <div className="text-center drop-shadow-2xl">
             <h2 className="text-4xl font-light mb-3 tracking-wide">{currentCall.type === 'video' ? 'WhatsApp Video' : 'WhatsApp Voice'}</h2>
             <div className="flex items-center justify-center gap-2">
@@ -98,10 +98,10 @@ export function CallScreen() {
         </div>
 
         <div className="flex gap-20 relative z-10 mb-10 w-full justify-center">
-          
+
           {/* Decline / Cancel Button */}
           <div className="flex flex-col items-center gap-3">
-            <button 
+            <button
               onClick={() => isCaller ? endCall() : rejectCall()}
               className="w-16 h-16 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-lg shadow-red-500/30 transition-transform active:scale-95"
             >
@@ -109,20 +109,20 @@ export function CallScreen() {
             </button>
             <span className="text-sm font-medium text-slate-300">{isCaller ? 'Cancel' : 'Decline'}</span>
           </div>
-          
+
           {/* Only show Accept to the Receiver */}
           {!isCaller && (
             <div className="flex flex-col items-center gap-3">
-               <div className="relative">
-                 <div className="absolute inset-0 bg-emerald-500 rounded-full animate-ping opacity-75" />
-                 <button 
-                   onClick={() => acceptCall()}
-                   className="w-16 h-16 rounded-full bg-emerald-500 hover:bg-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-500/40 relative z-10 transition-transform active:scale-95"
-                 >
-                   <Phone className="text-white fill-white" size={28} />
-                 </button>
-               </div>
-               <span className="text-sm font-medium text-slate-300">Accept</span>
+              <div className="relative">
+                <div className="absolute inset-0 bg-emerald-500 rounded-full animate-ping opacity-75" />
+                <button
+                  onClick={() => acceptCall()}
+                  className="w-16 h-16 rounded-full bg-emerald-500 hover:bg-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-500/40 relative z-10 transition-transform active:scale-95"
+                >
+                  <Phone className="text-white fill-white" size={28} />
+                </button>
+              </div>
+              <span className="text-sm font-medium text-slate-300">Accept</span>
             </div>
           )}
         </div>
@@ -135,14 +135,14 @@ export function CallScreen() {
 
     return (
       <div className="fixed inset-0 z-[100] bg-slate-900 text-white flex flex-col overflow-hidden">
-        
+
         {/* Remote Video / Avatar */}
         <div className="flex-1 relative bg-black flex items-center justify-center">
           {isVideo && remoteStream ? (
-            <video 
-              ref={remoteVideoRef} 
-              autoPlay 
-              playsInline 
+            <video
+              ref={remoteVideoRef}
+              autoPlay
+              playsInline
               className="w-full h-full object-cover"
             />
           ) : (
@@ -154,11 +154,11 @@ export function CallScreen() {
           {/* Local PiP Video */}
           {isVideo && localStream && (
             <div className="absolute top-4 right-4 w-28 h-40 bg-slate-800 rounded-lg overflow-hidden border-2 border-slate-600 shadow-xl z-10">
-              <video 
-                ref={localVideoRef} 
-                autoPlay 
-                playsInline 
-                muted 
+              <video
+                ref={localVideoRef}
+                autoPlay
+                playsInline
+                muted
                 className="w-full h-full object-cover"
               />
             </div>
@@ -175,8 +175,8 @@ export function CallScreen() {
             {isMuted ? <MicOff size={24} /> : <Mic size={24} />}
           </button>
 
-          <button 
-            className="p-5 bg-red-500 rounded-full hover:bg-red-600 transition-colors shadow-lg shadow-red-500/20" 
+          <button
+            className="p-5 bg-red-500 rounded-full hover:bg-red-600 transition-colors shadow-lg shadow-red-500/20"
             onClick={endCall}
           >
             <PhoneOff size={28} />
