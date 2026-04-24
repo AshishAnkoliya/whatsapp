@@ -16,7 +16,8 @@ export function CallScreen() {
     toggleMute,
     toggleVideo,
     isMuted,
-    isVideoOff
+    isVideoOff,
+    myUserId
   } = useCall();
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
@@ -37,6 +38,8 @@ export function CallScreen() {
   if (!currentCall) return null;
 
   if (currentCall.status === 'ringing') {
+    const isCaller = currentCall.caller_id === myUserId;
+
     return (
       <div className="fixed inset-0 z-[100] bg-slate-900 text-white flex flex-col items-center justify-between py-24">
         {/* Fake ringing sound could be played here */}
@@ -46,25 +49,27 @@ export function CallScreen() {
           </Avatar>
           <div className="text-center">
             <h2 className="text-3xl font-light mb-2">WhatsApp Call</h2>
-            <p className="text-slate-400">Incoming...</p>
+            <p className="text-slate-400">{isCaller ? "Calling..." : "Incoming..."}</p>
           </div>
         </div>
 
         <div className="flex gap-16">
           <button 
-            onClick={() => rejectCall()}
+            onClick={() => isCaller ? endCall() : rejectCall()}
             className="w-16 h-16 rounded-full bg-red-500 flex items-center justify-center animate-bounce-slow"
           >
             <PhoneOff className="text-white" size={28} />
           </button>
           
-          {/* If I'm the receiver, I can answer. If I'm the caller, I wait. */}
-          <button 
-            onClick={() => acceptCall()}
-            className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center animate-pulse"
-          >
-            <Phone className="text-white" size={28} />
-          </button>
+          {/* Only show Accept to the Receiver */}
+          {!isCaller && (
+            <button 
+              onClick={() => acceptCall()}
+              className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center animate-pulse"
+            >
+              <Phone className="text-white" size={28} />
+            </button>
+          )}
         </div>
       </div>
     );

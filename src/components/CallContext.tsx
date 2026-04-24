@@ -30,6 +30,7 @@ interface CallContextProps {
   toggleVideo: () => void;
   isMuted: boolean;
   isVideoOff: boolean;
+  myUserId: string | null;
 }
 
 const CallContext = createContext<CallContextProps | undefined>(undefined);
@@ -276,7 +277,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
         toggleMute,
         toggleVideo,
         isMuted,
-        isVideoOff
+        isVideoOff,
+        myUserId: userId
     }}>
       {children}
     </CallContext.Provider>

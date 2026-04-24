@@ -2076,13 +2076,13 @@ export default function Chat() {
 
                 {!isSearching && (
                   <div className="flex items-center gap-4 text-slate-600">
-                    <button onClick={() => setIsSearching(true)} className="p-1 hover:bg-slate-100 rounded-full transition-colors">
+                    <button onClick={() => setIsSearching(true)} className="p-1 hover:bg-slate-100 rounded-full transition-colors hidden sm:block">
                       <Search size={20} />
                     </button>
                     <button 
                       onClick={handleSubscribe} 
                       className={cn(
-                        "p-1 hover:bg-slate-100 rounded-full transition-colors relative group/bell",
+                        "p-1 hover:bg-slate-100 rounded-full transition-colors relative group/bell hidden sm:block",
                         notificationPermission === 'granted' ? "text-emerald-500" : "text-slate-400"
                       )}
                       title={notificationPermission === 'granted' ? "Notifications Enabled" : "Enable Notifications"}
