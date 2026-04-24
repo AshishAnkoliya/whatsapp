@@ -198,9 +198,11 @@ export function CallProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const startMedia = async (type: CallType): Promise<MediaStream | null> => {
-    // Don't request again if we already have it
-    if (localStreamRef.current) return localStreamRef.current;
+  const startMedia = async (type: CallType, forceRenew = false): Promise<MediaStream | null> => {
+    // Don't request again if we already have it and it's active
+    if (!forceRenew && localStreamRef.current && localStreamRef.current.active) {
+      return localStreamRef.current;
+    }
     try {
       const constraints = type === 'video'
         ? { video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: true }

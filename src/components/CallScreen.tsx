@@ -154,6 +154,18 @@ export function CallScreen() {
         {/* Corner light beams */}
         <CornerBeams />
 
+        {/* --- DIAGNOSTIC DEBUG OVERLAY --- */}
+        <div className="absolute top-2 left-2 text-[10px] text-white/70 bg-black/50 p-2 rounded z-[999] pointer-events-none whitespace-pre-wrap">
+          DEBUG:
+          Type: {currentCall?.type}
+          Status: {currentCall?.status}
+          isVideo: {String(isVideo)}
+          hasLocal: {String(!!localStream)}
+          hasRemote: {String(!!remoteStream)}
+          isCaller: {String(isCaller)}
+          hasPeer: {String(typeof window !== 'undefined' && 'peerInstance' in window ? 'active' : 'unknown')}
+        </div>
+
         {/* Ringtone */}
         <audio autoPlay loop src={isCaller ? "/outgoing_ring.mp3" : "/ringtone.mp3"} style={{ display: 'none' }} />
 
@@ -278,8 +290,10 @@ export function CallScreen() {
                   👤
                 </AvatarFallback>
               </Avatar>
-              {!hasRemoteStream && isVideo && (
-                <p className="text-cyan-400/70 text-sm animate-pulse">Connecting video...</p>
+              {!hasRemoteStream && (
+                <p className="text-cyan-400/70 text-sm animate-pulse">
+                  {isVideo ? 'Connecting video...' : 'Connecting audio...'}
+                </p>
               )}
             </div>
           )}
@@ -290,12 +304,18 @@ export function CallScreen() {
             {formatDuration(callDuration)}
           </div>
 
-          {/* Local PiP */}
-          {isVideo && localStream && (
-            <div className="absolute top-4 right-4 w-24 h-36 rounded-xl overflow-hidden z-10 shadow-2xl"
-              style={{ border: '2px solid rgba(0,229,255,0.3)' }}>
-              <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover -scale-x-100" />
-              {isVideoOff && (
+          {/* Local PiP (Always show if localStream exists) */}
+          {localStream && (
+            <div className="absolute top-4 right-4 w-24 h-36 rounded-xl overflow-hidden z-20 shadow-2xl bg-slate-900 border"
+              style={{ borderColor: 'rgba(0,229,255,0.5)' }}>
+              <video 
+                ref={localVideoRef} 
+                autoPlay 
+                playsInline 
+                muted 
+                className="w-full h-full object-cover transform scale-x-[-1]" 
+              />
+              {(!isVideo || isVideoOff) && (
                 <div className="absolute inset-0 bg-slate-900 flex items-center justify-center">
                   <VideoOff size={20} className="text-slate-500" />
                 </div>
