@@ -59,25 +59,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       setUserId(user.id);
 
       const peerId = `wa_${user.id}`;
-      // Free TURN servers for NAT traversal (critical for mobile networks)
-      const peer = new Peer(peerId, {
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            {
-              urls: 'turn:openrelay.metered.ca:80',
-              username: 'openrelayproject',
-              credential: 'openrelayproject'
-            },
-            {
-              urls: 'turn:openrelay.metered.ca:443',
-              username: 'openrelayproject',
-              credential: 'openrelayproject'
-            },
-          ]
-        }
-      });
+      const peer = new Peer(peerId);
 
       peer.on('open', (id) => {
         console.log('[PeerJS] Connected with ID:', id);
