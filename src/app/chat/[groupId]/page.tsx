@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { subscribeToPush } from '@/lib/push';
+import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 
 
 // Fallback for crypto.randomUUID which is only available in secure contexts (HTTPS/localhost)
@@ -231,27 +232,29 @@ export default function Chat() {
 
   // Navigation Interceptor for Back Button
   useEffect(() => {
-    const handlePopState = (e: PopStateEvent) => {
-      if (viewingMedia || isCameraOpen || pendingMedia || isViewingAllMedia) {
-        e.preventDefault();
-        setViewingMedia(null);
-        setIsCameraOpen(false);
-        setIsViewingAllMedia(false);
-        setPendingMedia(null);
-        setZoomLevel(1);
-        // Push state back so the user doesn't exit the chat on next back
-        window.history.pushState({ overlay: false }, '');
-      }
-    };
-
+    let pushed = false;
     if (viewingMedia || isCameraOpen || pendingMedia || isViewingAllMedia) {
-      window.history.pushState({ overlay: true }, '');
-      window.addEventListener('popstate', handlePopState);
-    } else {
-      window.removeEventListener('popstate', handlePopState);
+      window.history.pushState({ modalPanel: true }, '');
+      pushed = true;
     }
 
-    return () => window.removeEventListener('popstate', handlePopState);
+    const handlePopState = () => {
+      pushed = false;
+      setViewingMedia(null);
+      setIsCameraOpen(false);
+      setIsViewingAllMedia(false);
+      setPendingMedia(null);
+      setZoomLevel(1);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      if (pushed) {
+        window.history.back();
+      }
+    };
   }, [viewingMedia, isCameraOpen, pendingMedia, isViewingAllMedia]);
 
   useEffect(() => {
@@ -2313,7 +2316,7 @@ export default function Chat() {
                         isMe ? "text-slate-500" : "text-slate-400"
                       )}>
                         {starredMessageIds.includes(msg.id) && <Star size={10} fill="currentColor" className="text-yellow-400 mr-1" />}
-                        <span suppressHydrationWarning>{format(new Date(msg.created_at), 'HH:mm')}</span>
+                        <span suppressHydrationWarning>{format(new Date(msg.created_at), 'h:mm a')}</span>
                         <div className="flex items-center gap-1">
                           {msg.edited_at && <span className="text-[8px] text-slate-400 italic">Edited</span>}
                           {isMe && (
@@ -2722,115 +2725,98 @@ export default function Chat() {
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex flex-col items-center justify-center"
           >
-            {/* Header Controls */}
-            <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-center bg-gradient-to-b from-black/60 to-transparent z-50">
-              <div className="flex items-center gap-3">
-                <button 
-                  onClick={() => setViewingMedia(null)}
-                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
-                >
-                  <ArrowLeft size={24} />
-                </button>
-                <div className="text-white">
-                  <p className="font-bold text-sm">
-                    {viewingMedia.type === 'profile' ? (group?.name || 'Profile') : 
-                     viewingMedia.type === 'video' ? 'Video' : 'Photo'}
-                  </p>
-                  {viewingMedia.type !== 'profile' && viewingMedia.id && (
-                    <p className="text-[10px] text-white/60">
-                      {messages.find(m => m.id === viewingMedia.id)?.sender_name || 'Shared Media'}
-                    </p>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button 
-                  onClick={() => setZoomLevel(prev => Math.max(1, prev - 0.5))}
-                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
-                  title="Zoom Out"
-                >
-                  <Search size={22} className="scale-x-[-1]" />
-                </button>
-                <div className="text-white min-w-[40px] text-center text-xs font-mono">
-                  {Math.round(zoomLevel * 100)}%
-                </div>
-                <button 
-                  onClick={() => setZoomLevel(prev => Math.min(4, prev + 0.5))}
-                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
-                  title="Zoom In"
-                >
-                  <Search size={22} />
-                </button>
-                <button 
-                  onClick={() => {
-                    const link = document.createElement('a');
-                    link.href = viewingMedia.url;
-                    link.download = `media_${Date.now()}`;
-                    link.click();
-                  }}
-                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
-                >
-                  <Paperclip size={20} className="rotate-45" />
-                </button>
-                <button 
-                  onClick={() => setViewingMedia(null)}
-                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
-                >
-                  <X size={24} />
-                </button>
-              </div>
-            </div>
-
-            <motion.div
-              drag={zoomLevel > 1 ? false : "y"}
-              dragConstraints={{ top: 0, bottom: 0 }}
-              dragElastic={0.7}
-              onDragEnd={(_, info) => {
-                if (zoomLevel === 1 && Math.abs(info.offset.y) > 150) {
-                  setViewingMedia(null);
-                }
-              }}
-              className="w-full h-full flex items-center justify-center p-4 relative overflow-hidden"
-              onWheel={(e) => {
-                if (e.ctrlKey || e.metaKey) {
-                  setZoomLevel(prev => Math.min(4, Math.max(1, prev - e.deltaY * 0.005)));
-                }
-              }}
+            <TransformWrapper
+              initialScale={1}
+              minScale={1}
+              maxScale={8}
+              centerOnInit
             >
-              {viewingMedia.type === 'image' || viewingMedia.type === 'profile' ? (
-                <motion.div
-                  style={{ scale: zoomLevel }}
-                  className="transition-transform duration-200"
-                >
-                  <motion.img
-                    layoutId={viewingMedia.type === 'profile' ? `avatar-${groupId}` : `img-${viewingMedia.id}`}
-                    src={viewingMedia.url}
-                    className="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain z-10"
-                    initial={{ scale: 0.9, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    exit={{ scale: 0.9, opacity: 0 }}
-                    transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                  />
-                </motion.div>
-              ) : (
-                <motion.div 
-                  initial={{ scale: 0.9, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0.9, opacity: 0 }}
-                  style={{ scale: zoomLevel }}
-                  className="w-full max-w-4xl max-h-[80vh] flex items-center justify-center transition-transform duration-200"
-                >
-                  <video 
-                    src={viewingMedia.url} 
-                    controls 
-                    autoPlay 
-                    className="max-w-full max-h-[80vh] rounded-xl shadow-2xl "
-                  />
-                </motion.div>
+              {({ zoomIn, zoomOut, resetTransform }) => (
+                <>
+                  {/* Header Controls */}
+                  <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-center bg-gradient-to-b from-black/60 to-transparent z-50">
+                    <div className="flex items-center gap-3">
+                      <button 
+                        onClick={() => setViewingMedia(null)}
+                        className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
+                      >
+                        <ArrowLeft size={24} />
+                      </button>
+                      <div className="text-white">
+                        <p className="font-bold text-sm">
+                          {viewingMedia.type === 'profile' ? (group?.name || 'Profile') : 
+                           viewingMedia.type === 'video' ? 'Video' : 'Photo'}
+                        </p>
+                        {viewingMedia.type !== 'profile' && viewingMedia.id && (
+                          <p className="text-[10px] text-white/60">
+                            {messages.find(m => m.id === viewingMedia.id)?.sender_name || 'Shared Media'}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => {
+                          const link = document.createElement('a');
+                          link.href = viewingMedia.url;
+                          link.download = `media_${Date.now()}`;
+                          link.click();
+                        }}
+                        className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
+                      >
+                        <Paperclip size={20} className="rotate-45" />
+                      </button>
+                      <button 
+                        onClick={() => setViewingMedia(null)}
+                        className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
+                      >
+                        <X size={24} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="w-full h-full flex items-center justify-center p-0 relative overflow-hidden">
+                    <TransformComponent wrapperClass="!w-full !h-full" contentClass="!w-full !h-full flex items-center justify-center">
+                      {viewingMedia.type === 'image' || viewingMedia.type === 'profile' ? (
+                        <motion.img
+                          layoutId={viewingMedia.type === 'profile' ? `avatar-${groupId}` : `img-${viewingMedia.id}`}
+                          src={viewingMedia.url}
+                          className="max-w-full max-h-[100vh] object-contain"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ duration: 0.2 }}
+                          drag="y"
+                          dragConstraints={{ top: 0, bottom: 0 }}
+                          dragElastic={0.7}
+                          onDragEnd={(_, info) => {
+                            if (Math.abs(info.offset.y) > 150) {
+                              setViewingMedia(null);
+                            }
+                          }}
+                        />
+                      ) : (
+                        <motion.div 
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          className="w-full max-w-4xl max-h-[80vh] flex items-center justify-center"
+                        >
+                          <video 
+                            src={viewingMedia.url} 
+                            controls 
+                            autoPlay 
+                            className="max-w-full max-h-[80vh] rounded-xl shadow-2xl"
+                          />
+                        </motion.div>
+                      )}
+                    </TransformComponent>
+                  </div>
+                </>
               )}
-            </motion.div>
+            </TransformWrapper>
             
-            <div className="absolute bottom-8 left-0 right-0 flex justify-center text-white/40 text-[10px] uppercase tracking-widest font-bold">
+            <div className="absolute bottom-8 left-0 right-0 flex justify-center text-white/40 text-[10px] uppercase tracking-widest font-bold pointer-events-none z-50">
               Swipe up or down to close
             </div>
           </motion.div>
@@ -2857,7 +2843,7 @@ export default function Chat() {
                   <div key={m.id} className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
                     <div className="flex items-center gap-2 mb-2">
                       <span className="font-bold text-emerald-600 text-xs">{m.sender_name}</span>
-                      <span className="text-[10px] text-slate-400">{format(new Date(m.created_at), 'MMM d, HH:mm')}</span>
+                      <span className="text-[10px] text-slate-400">{format(new Date(m.created_at), 'MMM d, h:mm a')}</span>
                     </div>
                     <p className="text-sm text-slate-700">{m.content}</p>
                     {m.file_url && (
