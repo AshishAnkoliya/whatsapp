@@ -155,7 +155,7 @@ export function CallScreen() {
         <CornerBeams />
 
         {/* Ringtone */}
-        <audio autoPlay loop src="/ringtone.mp3" style={{ display: 'none' }} />
+        <audio autoPlay loop src={isCaller ? "/outgoing_ring.mp3" : "/ringtone.mp3"} style={{ display: 'none' }} />
 
         {/* Caller's own camera preview as background */}
         {isCaller && isVideo && localStream && (
@@ -264,6 +264,11 @@ export function CallScreen() {
 
         {/* Remote Video / Avatar */}
         <div className="flex-1 relative bg-black/90 flex items-center justify-center z-10 overflow-hidden">
+          {/* Always render an audio element for Voice Calls so remote audio routes to speakers */}
+          {!isVideo && hasRemoteStream && (
+            <audio ref={remoteVideoRef as React.RefObject<HTMLAudioElement>} autoPlay playsInline className="hidden" />
+          )}
+          
           {isVideo && hasRemoteStream ? (
             <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
           ) : (

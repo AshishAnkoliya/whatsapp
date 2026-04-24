@@ -166,8 +166,22 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
     // -- Call ended/rejected/missed → cleanup
     if (callData.status === 'ended' || callData.status === 'rejected' || callData.status === 'missed') {
+      console.log('[Supabase] Call terminated globally. Forcing cleanup.');
       setCurrentCall(prev => prev?.id === callData.id ? { ...prev, status: callData.status } : prev);
-      setTimeout(cleanupCall, 1000); // small delay so UI shows "ended"
+      
+      // Stop all hardware tracks immediately
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach(t => {
+          t.stop();
+          console.log(`[Media] Track stopped: ${t.kind}`);
+        });
+      }
+      
+      if (pendingPeerCall.current) {
+        pendingPeerCall.current.close();
+      }
+
+      setTimeout(cleanupCall, 800); // UI reads "ended" briefly then vanishes
       return;
     }
 
@@ -223,8 +237,19 @@ export function CallProvider({ children }: { children: ReactNode }) {
   };
 
   const cleanupCall = () => {
-    localStreamRef.current?.getTracks().forEach(t => t.stop());
-    pendingPeerCall.current?.close();
+    console.log('[Cleanup] Aggressively stopping all media and WebRTC connections');
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(t => {
+        t.stop();
+        console.log(`[Cleanup] Stopped ${t.kind} track`);
+      });
+    }
+    
+    if (pendingPeerCall.current) {
+      pendingPeerCall.current.close();
+    }
+    
+    // Do not destroy the main PeerJS instance so future calls work, just the connection
     setCurrentCall(null);
     setLocalStream(null);
     setRemoteStream(null);
@@ -253,6 +278,19 @@ export function CallProvider({ children }: { children: ReactNode }) {
       cleanupCall();
       return;
     }
+
+    // Trigger high-priority push notification aimed directly at the target user
+    fetch('/api/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetUserId: receiverId, // Crucial for P2P direct pushes
+        senderId: userId,
+        title: `Incoming ${type === 'video' ? 'Video' : 'Voice'} Call`,
+        body: 'Tap to answer',
+        url: window.location.href
+      })
+    }).catch(e => console.error('[Call Error] Failed to send push:', e));
 
     setCurrentCall({
       id: data.id,

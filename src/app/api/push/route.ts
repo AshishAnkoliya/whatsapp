@@ -18,7 +18,7 @@ export async function POST(request: Request) {
   
   try {
     const payload = await request.json();
-    const { groupId, senderId, title, body, url, subscription: directSubscription } = payload;
+    const { groupId, senderId, targetUserId, title, body, url, subscription: directSubscription } = payload;
 
     // Support both direct push (for testing) and group-based push
     if (directSubscription) {
@@ -28,36 +28,39 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true, mode: 'direct' });
     }
 
-    if (!groupId || !senderId) {
-      return NextResponse.json({ error: 'Missing groupId or senderId' }, { status: 400 });
+    let targetMemberIds: string[] = [];
+
+    if (targetUserId) {
+      console.log(`Processing direct push for Target: ${targetUserId}`);
+      targetMemberIds = [targetUserId];
+    } else if (groupId && senderId) {
+      console.log(`Processing push for Group: ${groupId}, Sender: ${senderId}`);
+
+      // 1. Fetch group members using service_role client (bypasses RLS)
+      console.log('--- DB QUERY 1: Fetching group members... ---');
+      const { data: members, error: membersError } = await supabaseServer
+        .from('group_members')
+        .select('user_id')
+        .eq('group_id', groupId);
+
+      if (membersError) {
+        console.error('❌ Member fetch error:', membersError);
+        throw membersError;
+      }
+      
+      // Filter out sender
+      targetMemberIds = members
+        ?.filter(m => m.user_id !== senderId)
+        .map(m => m.user_id) || [];
+    } else {
+      return NextResponse.json({ error: 'Missing targetUserId or groupId/senderId' }, { status: 400 });
     }
 
-    console.log(`Processing push for Group: ${groupId}, Sender: ${senderId}`);
+    console.log(`Target member IDs:`, targetMemberIds);
 
-    // 1. Fetch group members using service_role client (bypasses RLS)
-    console.log('--- DB QUERY 1: Fetching group members... ---');
-    const { data: members, error: membersError } = await supabaseServer
-      .from('group_members')
-      .select('user_id')
-      .eq('group_id', groupId);
-
-    if (membersError) {
-      console.error('❌ Member fetch error:', membersError);
-      throw membersError;
-    }
-    
-    console.log('All group members found:', members?.map(m => m.user_id));
-
-    // Filter out sender
-    const otherMemberIds = members
-      ?.filter(m => m.user_id !== senderId)
-      .map(m => m.user_id) || [];
-
-    console.log(`Target member IDs (excluding sender ${senderId}):`, otherMemberIds);
-
-    if (otherMemberIds.length === 0) {
-      console.log('No other members found to notify.');
-      return NextResponse.json({ success: true, message: 'No other members' });
+    if (targetMemberIds.length === 0) {
+      console.log('No members found to notify.');
+      return NextResponse.json({ success: true, message: 'No target members' });
     }
 
     // 2. Fetch all subscriptions for these users
@@ -65,7 +68,7 @@ export async function POST(request: Request) {
     const { data: subscriptions, error: subsError } = await supabaseServer
       .from('push_subscriptions')
       .select('*')
-      .in('user_id', otherMemberIds);
+      .in('user_id', targetMemberIds);
 
     if (subsError) {
       console.error('❌ Subscription fetch error:', subsError);
