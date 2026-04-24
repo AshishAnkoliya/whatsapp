@@ -2099,8 +2099,8 @@ export default function Chat() {
                         <div className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full border-2 border-white animate-pulse" />
                       )}
                     </button>
-                    <Video size={20} className="hidden sm:block hover:text-emerald-600 transition-colors cursor-pointer" onClick={() => handleCall('video')} />
-                    <Phone size={20} className="hidden sm:block hover:text-emerald-600 transition-colors cursor-pointer" onClick={() => handleCall('audio')} />
+                    <Video size={20} className="hover:text-emerald-600 transition-colors cursor-pointer" onClick={() => handleCall('video')} />
+                    <Phone size={20} className="hover:text-emerald-600 transition-colors cursor-pointer" onClick={() => handleCall('audio')} />
                     <button
                       onClick={() => setIsViewingStarred(true)}
                       className="p-1 hover:bg-slate-100 rounded-full transition-colors text-yellow-500 hidden xs:block"
