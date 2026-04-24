@@ -46,6 +46,11 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const [userId, setUserId] = useState<string | null>(null);
   const peerInstance = useRef<Peer | null>(null);
   const currentConnection = useRef<MediaConnection | null>(null);
+  const currentCallRef = useRef<CallState | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+
+  useEffect(() => { currentCallRef.current = currentCall; }, [currentCall]);
+  useEffect(() => { localStreamRef.current = localStream; }, [localStream]);
 
   // Initialize PeerJS and Supabase Realtime when user logs in
   useEffect(() => {
@@ -77,7 +82,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
         .eq('receiver_id', user.id)
         .eq('status', 'ringing')
         .limit(1)
-        .single();
+        .maybeSingle();
         
       if (existingCall) {
          handleCallEvent(existingCall, user.id);
@@ -118,7 +123,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     if (!callData) return;
     
     // Ignore updates for old calls if we have an active one
-    if (currentCall && currentCall.id !== callData.id && callData.status === 'ringing') {
+    if (currentCallRef.current && currentCallRef.current.id !== callData.id && callData.status === 'ringing') {
         // Automatically reject if busy (or we could just return)
         if (myUserId === callData.receiver_id) {
             await supabase.from('calls').update({ status: 'rejected' }).eq('id', callData.id);
@@ -140,10 +145,10 @@ export function CallProvider({ children }: { children: ReactNode }) {
         cleanupCall();
     } else if (callData.status === 'ongoing' && myUserId === callData.caller_id) {
         // Receiver accepted. Caller initiates Peer connection.
-        await startMedia(callData.type);
-        if (peerInstance.current && localStream) {
+        const stream = await startMedia(callData.type);
+        if (peerInstance.current && stream) {
             const remoteId = `whatsapp_user_${callData.receiver_id}`;
-            const call = peerInstance.current.call(remoteId, localStream);
+            const call = peerInstance.current.call(remoteId, stream);
             currentConnection.current = call;
             call.on('stream', (userVideoStream) => {
                 setRemoteStream(userVideoStream);
@@ -162,6 +167,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
         audio: true
       });
       setLocalStream(stream);
+      localStreamRef.current = stream;
       return stream;
     } catch (err: any) {
       toast.error(`Media access error: ${err.message}`);
@@ -170,8 +176,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
   };
 
   const cleanupCall = () => {
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
     }
     if (currentConnection.current) {
       currentConnection.current.close();
@@ -179,6 +185,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
     setCurrentCall(null);
     setLocalStream(null);
     setRemoteStream(null);
+    localStreamRef.current = null;
+    currentCallRef.current = null;
     setIsMuted(false);
     setIsVideoOff(false);
   };
