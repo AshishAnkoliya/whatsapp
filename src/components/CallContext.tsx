@@ -10,7 +10,7 @@ export type CallStatus = 'idle' | 'ringing' | 'ongoing' | 'ended' | 'rejected';
 export type CallType = 'audio' | 'video';
 
 interface CallState {
-  id: string; // The call ID from Supabase
+  id: string;
   status: CallStatus;
   type: CallType;
   caller_id: string;
@@ -39,43 +39,73 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const [currentCall, setCurrentCall] = useState<CallState | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-  
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
-
   const [userId, setUserId] = useState<string | null>(null);
+
   const peerInstance = useRef<Peer | null>(null);
-  const currentConnection = useRef<MediaConnection | null>(null);
+  // pendingPeerCall = incoming PeerJS call that arrived before user accepted
+  const pendingPeerCall = useRef<MediaConnection | null>(null);
   const currentCallRef = useRef<CallState | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => { currentCallRef.current = currentCall; }, [currentCall]);
   useEffect(() => { localStreamRef.current = localStream; }, [localStream]);
 
-  // Initialize PeerJS and Supabase Realtime when user logs in
   useEffect(() => {
     async function init() {
       const user = await getCurrentUser();
       if (!user) return;
       setUserId(user.id);
 
-      // Create Peer
-      const peerId = `whatsapp_user_${user.id}`;
-      const peer = new Peer(peerId);
-      
-      peer.on('open', (id) => {
-        console.log('My peer ID is: ' + id);
+      const peerId = `wa_${user.id}`;
+      // Free TURN servers for NAT traversal (critical for mobile networks)
+      const peer = new Peer(peerId, {
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            {
+              urls: 'turn:openrelay.metered.ca:80',
+              username: 'openrelayproject',
+              credential: 'openrelayproject'
+            },
+            {
+              urls: 'turn:openrelay.metered.ca:443',
+              username: 'openrelayproject',
+              credential: 'openrelayproject'
+            },
+          ]
+        }
       });
 
-      peer.on('call', (call) => {
-        // We received a P2P call. We should only answer it if our Supabase state is 'ongoing' (we accepted it)
-        // But for now, we save it to the ref and wait for the user to accept.
-        currentConnection.current = call;
+      peer.on('open', (id) => {
+        console.log('[PeerJS] Connected with ID:', id);
+      });
+
+      peer.on('error', (err) => {
+        console.error('[PeerJS] Error:', err);
+      });
+
+      // When CALLER dials us (receiver side) → save it, answer only after acceptCall()
+      peer.on('call', (mediaCall) => {
+        console.log('[PeerJS] Incoming media call from:', mediaCall.peer);
+        pendingPeerCall.current = mediaCall;
+
+        // If receiver already accepted (stream ready), answer immediately
+        if (localStreamRef.current) {
+          mediaCall.answer(localStreamRef.current);
+          mediaCall.on('stream', (remStream) => {
+            console.log('[PeerJS] Got remote stream from caller');
+            setRemoteStream(remStream);
+          });
+          mediaCall.on('close', cleanupCall);
+        }
       });
 
       peerInstance.current = peer;
 
-      // Check if there is an already ringing call for me when I open the app
+      // Check for an already-ringing call on load (in case app was opened after call started)
       const { data: existingCall } = await supabase
         .from('calls')
         .select('*')
@@ -83,187 +113,205 @@ export function CallProvider({ children }: { children: ReactNode }) {
         .eq('status', 'ringing')
         .limit(1)
         .maybeSingle();
-        
+
       if (existingCall) {
-         handleCallEvent(existingCall, user.id);
+        handleCallEvent(existingCall, user.id);
       }
 
-      // Listen to Supabase `calls` table
-      const subscription = supabase
-        .channel('public:calls')
-        .on('postgres_changes', { 
-            event: '*', 
-            schema: 'public', 
-            table: 'calls',
-            filter: `receiver_id=eq.${user.id}` 
-        }, payload => {
-            handleCallEvent(payload.new as any, user.id);
+      // Listen to Supabase realtime for call events
+      const channel = supabase
+        .channel(`calls_${user.id}`)
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'calls',
+          filter: `receiver_id=eq.${user.id}`
+        }, (payload) => {
+          console.log('[Supabase] Receiver event:', payload.new);
+          handleCallEvent(payload.new as CallState, user.id);
         })
-        .on('postgres_changes', { 
-            event: '*', 
-            schema: 'public', 
-            table: 'calls',
-            filter: `caller_id=eq.${user.id}` 
-        }, payload => {
-            handleCallEvent(payload.new as any, user.id);
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'calls',
+          filter: `caller_id=eq.${user.id}`
+        }, (payload) => {
+          console.log('[Supabase] Caller event:', payload.new);
+          handleCallEvent(payload.new as CallState, user.id);
         })
-        .subscribe();
+        .subscribe((status) => {
+          console.log('[Supabase] Channel status:', status);
+        });
 
       return () => {
-        supabase.removeChannel(subscription);
-        if (peerInstance.current) {
-          peerInstance.current.destroy();
-        }
+        supabase.removeChannel(channel);
+        peer.destroy();
       };
     }
     init();
   }, []);
 
-  const handleCallEvent = async (callData: any, myUserId: string) => {
-    if (!callData) return;
-    
-    // Ignore updates for old calls if we have an active one
-    if (currentCallRef.current && currentCallRef.current.id !== callData.id && callData.status === 'ringing') {
-        // Automatically reject if busy (or we could just return)
-        if (myUserId === callData.receiver_id) {
-            await supabase.from('calls').update({ status: 'rejected' }).eq('id', callData.id);
-        }
-        return;
+  const handleCallEvent = async (callData: CallState, myId: string) => {
+    if (!callData || !callData.id) return;
+
+    const activeCall = currentCallRef.current;
+
+    // -- New ringing call while we're busy → auto-reject
+    if (activeCall && activeCall.id !== callData.id && callData.status === 'ringing') {
+      if (myId === callData.receiver_id) {
+        await supabase.from('calls').update({ status: 'rejected' }).eq('id', callData.id);
+      }
+      return;
     }
 
-    // Set new call
+    // -- Call ended/rejected/missed → cleanup
+    if (callData.status === 'ended' || callData.status === 'rejected' || callData.status === 'missed') {
+      setCurrentCall(prev => prev?.id === callData.id ? { ...prev, status: callData.status } : prev);
+      setTimeout(cleanupCall, 1000); // small delay so UI shows "ended"
+      return;
+    }
+
+    // -- Update local call state
     setCurrentCall({
-        id: callData.id,
-        status: callData.status,
-        type: callData.type,
-        caller_id: callData.caller_id,
-        receiver_id: callData.receiver_id,
-        remotePeerId: `whatsapp_user_${myUserId === callData.receiver_id ? callData.caller_id : callData.receiver_id}`
+      id: callData.id,
+      status: callData.status,
+      type: callData.type,
+      caller_id: callData.caller_id,
+      receiver_id: callData.receiver_id,
+      remotePeerId: `wa_${myId === callData.receiver_id ? callData.caller_id : callData.receiver_id}`
     });
 
-    if (callData.status === 'ended' || callData.status === 'rejected' || callData.status === 'missed') {
-        cleanupCall();
-    } else if (callData.status === 'ongoing' && myUserId === callData.caller_id) {
-        // Receiver accepted. Caller initiates Peer connection.
-        const stream = await startMedia(callData.type);
-        if (peerInstance.current && stream) {
-            const remoteId = `whatsapp_user_${callData.receiver_id}`;
-            const call = peerInstance.current.call(remoteId, stream);
-            currentConnection.current = call;
-            call.on('stream', (userVideoStream) => {
-                setRemoteStream(userVideoStream);
-            });
-            call.on('close', () => {
-                cleanupCall();
-            });
-        }
+    // -- Receiver accepted → Caller now initiates the PeerJS media call
+    if (callData.status === 'ongoing' && myId === callData.caller_id) {
+      console.log('[Caller] Receiver accepted! Initiating PeerJS call...');
+      const stream = await startMedia(callData.type);
+      if (!stream || !peerInstance.current) return;
+
+      const remoteId = `wa_${callData.receiver_id}`;
+      console.log('[Caller] Calling peer:', remoteId);
+      const mediaCall = peerInstance.current.call(remoteId, stream);
+
+      mediaCall.on('stream', (remStream) => {
+        console.log('[Caller] Got remote stream from receiver!');
+        setRemoteStream(remStream);
+      });
+      mediaCall.on('close', cleanupCall);
+      mediaCall.on('error', (e) => console.error('[Caller] MediaCall error:', e));
+
+      pendingPeerCall.current = mediaCall;
     }
   };
 
   const startMedia = async (type: CallType): Promise<MediaStream | null> => {
+    // Don't request again if we already have it
+    if (localStreamRef.current) return localStreamRef.current;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: type === 'video',
-        audio: true
-      });
+      const constraints = type === 'video'
+        ? { video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: true }
+        : { video: false, audio: true };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       setLocalStream(stream);
       localStreamRef.current = stream;
+      console.log('[Media] Got local stream, tracks:', stream.getTracks().map(t => t.kind));
       return stream;
-    } catch (err: any) {
-      toast.error(`Media access error: ${err.message}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(`Camera/Mic error: ${msg}. Please allow access.`);
       return null;
     }
   };
 
   const cleanupCall = () => {
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
-    }
-    if (currentConnection.current) {
-      currentConnection.current.close();
-    }
+    localStreamRef.current?.getTracks().forEach(t => t.stop());
+    pendingPeerCall.current?.close();
     setCurrentCall(null);
     setLocalStream(null);
     setRemoteStream(null);
     localStreamRef.current = null;
     currentCallRef.current = null;
+    pendingPeerCall.current = null;
     setIsMuted(false);
     setIsVideoOff(false);
   };
 
   const initiateCall = async (receiverId: string, type: CallType) => {
     if (!userId) return;
-    
-    // Request media first to ensure permissions before ringing
+
+    // Get media first (cam/mic permission)
     const stream = await startMedia(type);
     if (!stream) return;
 
-    // Create call in DB
-    const { data, error } = await supabase.from('calls').insert({
-        caller_id: userId,
-        receiver_id: receiverId,
-        type: type,
-        status: 'ringing'
-    }).select().single();
+    const { data, error } = await supabase
+      .from('calls')
+      .insert({ caller_id: userId, receiver_id: receiverId, type, status: 'ringing' })
+      .select()
+      .single();
 
-    if (error) {
-        toast.error("Failed to make call");
-        cleanupCall();
-        return;
+    if (error || !data) {
+      toast.error('Failed to make call. Please try again.');
+      cleanupCall();
+      return;
     }
 
-    // Trigger Push Notification to wake up receiver's phone if app is closed
-    fetch('/api/push', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        groupId: receiverId, // Using receiverId as target
-        senderId: userId,
-        title: `Incoming ${type} Call`,
-        body: 'Tap to answer',
-        url: window.location.href
-      })
-    }).catch(console.error);
-
     setCurrentCall({
-        id: data.id,
-        status: 'ringing',
-        type: type,
-        caller_id: userId,
-        receiver_id: receiverId,
-        remotePeerId: `whatsapp_user_${receiverId}`
+      id: data.id,
+      status: 'ringing',
+      type,
+      caller_id: userId,
+      receiver_id: receiverId,
+      remotePeerId: `wa_${receiverId}`
     });
   };
 
   const acceptCall = async () => {
     if (!currentCall || !userId) return;
-    
+
+    // Get receiver's own camera/mic first
     const stream = await startMedia(currentCall.type);
     if (!stream) {
-        rejectCall();
-        return;
+      rejectCall();
+      return;
     }
 
-    // Answer the pending peer connection if it came in early
-    if (currentConnection.current) {
-        currentConnection.current.answer(stream);
-        currentConnection.current.on('stream', (remoteStream) => {
-            setRemoteStream(remoteStream);
-        });
+    // Update DB → this triggers Caller's handleCallEvent with status='ongoing'
+    const { error } = await supabase
+      .from('calls')
+      .update({ status: 'ongoing' })
+      .eq('id', currentCall.id);
+
+    if (error) {
+      toast.error('Failed to accept call');
+      return;
+    }
+
+    // If PeerJS call from Caller already arrived → answer it now with our stream
+    if (pendingPeerCall.current) {
+      console.log('[Receiver] Answering pending PeerJS call');
+      pendingPeerCall.current.answer(stream);
+      pendingPeerCall.current.on('stream', (remStream) => {
+        console.log('[Receiver] Got caller stream!');
+        setRemoteStream(remStream);
+      });
+      pendingPeerCall.current.on('close', cleanupCall);
     } else {
-        // Wait for peer to call us. We update DB so caller knows we accepted.
-        const { error } = await supabase.from('calls').update({ status: 'ongoing' }).eq('id', currentCall.id);
-        
-        // Let's add a small listener on peer instance for the call event to come shortly after
-        if (peerInstance.current) {
-            peerInstance.current.on('call', (call) => {
-                currentConnection.current = call;
-                call.answer(stream);
-                call.on('stream', (remStream) => {
-                     setRemoteStream(remStream);
-                });
-            });
-        }
+      // PeerJS call hasn't arrived yet → set up listener to answer when it comes
+      console.log('[Receiver] Waiting for PeerJS call from caller...');
+      if (peerInstance.current) {
+        const handler = (mediaCall: MediaConnection) => {
+          console.log('[Receiver] PeerJS call arrived, answering...');
+          pendingPeerCall.current = mediaCall;
+          mediaCall.answer(stream);
+          mediaCall.on('stream', (remStream) => {
+            console.log('[Receiver] Got caller stream!');
+            setRemoteStream(remStream);
+          });
+          mediaCall.on('close', cleanupCall);
+          // Remove listener after answering
+          peerInstance.current?.off('call', handler);
+        };
+        peerInstance.current.on('call', handler);
+      }
     }
   };
 
@@ -280,39 +328,27 @@ export function CallProvider({ children }: { children: ReactNode }) {
   };
 
   const toggleMute = () => {
-    if (localStream) {
-      const audioTrack = localStream.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsMuted(!audioTrack.enabled);
-      }
+    const audio = localStream?.getAudioTracks()[0];
+    if (audio) {
+      audio.enabled = !audio.enabled;
+      setIsMuted(!audio.enabled);
     }
   };
 
   const toggleVideo = () => {
-    if (localStream) {
-      const videoTrack = localStream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        setIsVideoOff(!videoTrack.enabled);
-      }
+    const video = localStream?.getVideoTracks()[0];
+    if (video) {
+      video.enabled = !video.enabled;
+      setIsVideoOff(!video.enabled);
     }
   };
 
   return (
     <CallContext.Provider value={{
-        currentCall,
-        localStream,
-        remoteStream,
-        initiateCall,
-        acceptCall,
-        rejectCall,
-        endCall,
-        toggleMute,
-        toggleVideo,
-        isMuted,
-        isVideoOff,
-        myUserId: userId
+      currentCall, localStream, remoteStream,
+      initiateCall, acceptCall, rejectCall, endCall,
+      toggleMute, toggleVideo, isMuted, isVideoOff,
+      myUserId: userId
     }}>
       {children}
     </CallContext.Provider>
@@ -321,8 +357,6 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
 export const useCall = () => {
   const context = useContext(CallContext);
-  if (context === undefined) {
-    throw new Error('useCall must be used within a CallProvider');
-  }
+  if (!context) throw new Error('useCall must be used within a CallProvider');
   return context;
 };
