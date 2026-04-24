@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { toast } from "sonner";
 
-export type CallStatus = 'idle' | 'ringing' | 'ongoing' | 'ended' | 'rejected';
+export type CallStatus = 'idle' | 'ringing' | 'ongoing' | 'ended' | 'rejected' | 'missed';
 export type CallType = 'audio' | 'video';
 
 interface CallState {
