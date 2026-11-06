@@ -54,6 +54,9 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     updateLastSeen();
     const interval = setInterval(updateLastSeen, 60000);
 
+    // Background keep-alive & health check ping (shows in DevTools Network tab)
+    fetch('/api/health').catch(() => {});
+
     return () => {
       subscription.unsubscribe();
       clearInterval(interval);

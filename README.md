@@ -34,3 +34,27 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+---
+
+## 🟢 Supabase Keep-Alive & Health Check API
+
+Supabase Free Tier projects automatically pause if they receive no database/API queries for 7 days. This project includes built-in keep-alive and health monitoring endpoints to keep Supabase active 24/7 without dying.
+
+### Endpoints
+
+- **Health Check**: `GET /api/health`
+- **Detailed Health Check**: `GET /api/health?detailed=true`
+- **Keep-Alive Alias**: `GET /api/keepalive`
+- Supports `GET`, `POST`, and `HEAD` methods.
+
+### Automated Keep-Alive Options
+
+1. **Vercel Cron (`vercel.json`)**: Configured to ping `/api/health` automatically every 2 days (`0 4 */2 * *`).
+2. **GitHub Actions (`.github/workflows/supabase-keepalive.yml`)**: Automated cron workflow runs every 2 days to hit your deployment URL and Supabase REST directly.
+3. **Local / Node CLI**:
+   ```bash
+   npm run keepalive
+   ```
+4. **Free External Monitoring (UptimeRobot / Cron-job.org)**:
+   Add a free HTTP monitor pointing to `https://your-domain/api/health` (every 10 minutes or daily).

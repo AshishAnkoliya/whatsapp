@@ -171,9 +171,15 @@ export function CallScreen() {
 
         {/* Caller's own camera preview as background */}
         {isCaller && isVideo && localStream && (
-          <div className="absolute inset-0">
-            <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover opacity-40 -scale-x-100" />
-            <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, rgba(5,13,24,0.85) 0%, rgba(5,13,24,0.3) 50%, rgba(5,13,24,0.95) 100%)' }} />
+          <div className="absolute inset-0 -z-10">
+            <video 
+              ref={localVideoRef} 
+              autoPlay 
+              playsInline 
+              muted 
+              className="w-full h-full object-cover transform scale-x-[-1] opacity-70" 
+            />
+            <div className="absolute inset-0 bg-slate-900/60" />
           </div>
         )}
 
